@@ -1,0 +1,75 @@
+name: Build Mini-Linux 128MB
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      root_password:
+        description: "Initial root password (default: minilinux)"
+        required: false
+        default: "minilinux"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libelf-dev \
+            libssl-dev \
+            musl-tools \
+            linux-libc-dev \
+            syslinux \
+            extlinux \
+            isolinux \
+            syslinux-common \
+            xorriso \
+            e2fsprogs \
+            fdisk \
+            qemu-utils \
+            ca-certificates \
+            curl \
+            xz-utils \
+            bzip2
+
+      - name: Cache upstream source tarballs
+        uses: actions/cache@v4
+        with:
+          path: build/dl
+          key: mini-linux-sources-v1-${{ hashFiles('scripts/common.sh') }}
+
+      - name: Build Mini-Linux (Kernel + BusyBox + Dropbear + WireGuard + Images)
+        env:
+          ROOT_PASSWORD: ${{ inputs.root_password || 'minilinux' }}
+        run: |
+          chmod +x scripts/*.sh
+          bash scripts/build-all.sh
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd out
+          sha256sum bzImage mini-linux.img mini-linux.iso mini-linux.vdi > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-linux-128mb-x86_64
+          path: |
+            out/mini-linux.iso
+            out/mini-linux.img
+            out/mini-linux.vdi
+            out/bzImage
+            out/SHA256SUMS.txt
+          retention-days: 30

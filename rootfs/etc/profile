@@ -1,0 +1,10 @@
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME="${HOME:-/root}"
+export TERM="${TERM:-xterm-256color}"
+export TZ=UTC0
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+ulimit -n 16384 2>/dev/null || true
+
+PS1='[root@minilinux \W]# '
+alias ll='ls -la'

@@ -1,0 +1,12 @@
+# Salin file ini menjadi /etc/network.conf untuk menggunakan IP Statis
+# Jika /etc/network.conf tidak ada atau MODE=dhcp, sistem memakai udhcpc.
+
+MODE=static
+IFACE=eth0
+STATIC_IP=192.168.1.10/24
+GATEWAY=192.168.1.1
+DNS="1.1.1.1 8.8.8.8"
+
+# Opsional IPv6:
+# STATIC_IP6=2001:db8::10/64
+# GATEWAY6=2001:db8::1

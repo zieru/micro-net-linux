@@ -1,0 +1,164 @@
+#!/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+WG_DIR="/etc/wireguard"
+
+strip_wg_quick_fields() {
+    # Remove wg-quick-only directives so `wg setconf` accepts the file cleanly
+    awk '
+        BEGIN { IGNORECASE = 1 }
+        /^[[:space:]]*#/ || /^[[:space:]]*;/ || /^[[:space:]]*$/ { next }
+        /^[[:space:]]*(Address|DNS|MTU|Table|PreUp|PostUp|PreDown|PostDown|SaveConfig)[[:space:]]*=/ { next }
+        { print }
+    ' "$1"
+}
+
+get_conf_values() {
+    key="$1"
+    file="$2"
+    awk -v k="$key" '
+        BEGIN { IGNORECASE = 1 }
+        /^[[:space:]]*#/ || /^[[:space:]]*;/ { next }
+        {
+            line = $0
+            sub(/#.*/, "", line)
+            if (match(line, "^[[:space:]]*" k "[[:space:]]*=")) {
+                val = substr(line, RLENGTH + 1)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                print val
+            }
+        }
+    ' "$file"
+}
+
+up_iface() {
+    conf="$1"
+    iface="$(basename "$conf" .conf)"
+    raw_conf="/run/wg-${iface}.conf"
+
+    if ! command -v wg >/dev/null 2>&1; then
+        echo "[wg] ERROR: wg binary not found."
+        return 1
+    fi
+
+    ip link del dev "$iface" 2>/dev/null || true
+    if ! ip link add dev "$iface" type wireguard; then
+        echo "[wg] ERROR: Failed to create WireGuard interface $iface."
+        return 1
+    fi
+
+    umask 077
+    strip_wg_quick_fields "$conf" > "$raw_conf"
+    chmod 600 "$raw_conf"
+
+    if ! wg setconf "$iface" "$raw_conf"; then
+        echo "[wg] ERROR: wg setconf failed for $iface."
+        rm -f "$raw_conf"
+        ip link del dev "$iface" 2>/dev/null || true
+        return 1
+    fi
+    rm -f "$raw_conf"
+
+    # Assign Address(es)
+    get_conf_values "Address" "$conf" | tr ',' '\n' | while IFS= read -r addr; do
+        addr="$(echo "$addr" | tr -d '[:space:]')"
+        [ -z "$addr" ] && continue
+        case "$addr" in
+            *:*) ip -6 addr add "$addr" dev "$iface" 2>/dev/null || true ;;
+            *)   ip -4 addr add "$addr" dev "$iface" 2>/dev/null || true ;;
+        esac
+    done
+
+    mtu="$(get_conf_values "MTU" "$conf" | head -n 1 | tr -d '[:space:]')"
+    if [ -n "$mtu" ]; then
+        ip link set dev "$iface" mtu "$mtu" 2>/dev/null || true
+    fi
+
+    ip link set dev "$iface" up
+
+    table="$(get_conf_values "Table" "$conf" | head -n 1 | tr -d '[:space:]')"
+    if [ "$table" != "off" ]; then
+        # Preserve default-gateway path for peer endpoints before adding default tunnel routes
+        def_gw="$(ip -4 route show default 2>/dev/null | awk '/default via/ {print $3; exit}')"
+        def_dev="$(ip -4 route show default 2>/dev/null | awk '/default via/ {for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+
+        get_conf_values "Endpoint" "$conf" | while IFS= read -r ep; do
+            ep_host="${ep%:*}"
+            ep_host="${ep_host#[}"
+            ep_host="${ep_host%]}"
+            case "$ep_host" in
+                *[!0-9.]*) ;; # Skip non-IPv4 hostnames here
+                *)
+                    if [ -n "$def_gw" ] && [ -n "$def_dev" ]; then
+                        ip -4 route replace "${ep_host}/32" via "$def_gw" dev "$def_dev" 2>/dev/null || true
+                    fi
+                    ;;
+            esac
+        done
+
+        table_arg=""
+        case "$table" in
+            ""|auto) table_arg="" ;;
+            *)       table_arg="table $table" ;;
+        esac
+
+        get_conf_values "AllowedIPs" "$conf" | tr ',' '\n' | while IFS= read -r cidr; do
+            cidr="$(echo "$cidr" | tr -d '[:space:]')"
+            [ -z "$cidr" ] && continue
+            if [ "$cidr" = "0.0.0.0/0" ] && [ -z "$table_arg" ]; then
+                ip -4 route replace 0.0.0.0/1 dev "$iface" 2>/dev/null || true
+                ip -4 route replace 128.0.0.0/1 dev "$iface" 2>/dev/null || true
+            elif [ "$cidr" = "::/0" ] && [ -z "$table_arg" ]; then
+                ip -6 route replace ::/1 dev "$iface" 2>/dev/null || true
+                ip -6 route replace 8000::/1 dev "$iface" 2>/dev/null || true
+            else
+                case "$cidr" in
+                    *:*)
+                        # shellcheck disable=SC2086
+                        ip -6 route replace "$cidr" dev "$iface" $table_arg 2>/dev/null || true
+                        ;;
+                    *)
+                        # shellcheck disable=SC2086
+                        ip -4 route replace "$cidr" dev "$iface" $table_arg 2>/dev/null || true
+                        ;;
+                esac
+            fi
+        done
+    fi
+
+    echo "[wg] Interface $iface is up."
+}
+
+start() {
+    [ -d "$WG_DIR" ] || return 0
+    for conf in "$WG_DIR"/*.conf; do
+        [ -f "$conf" ] || continue
+        up_iface "$conf"
+    done
+}
+
+stop() {
+    [ -d "$WG_DIR" ] || return 0
+    for conf in "$WG_DIR"/*.conf; do
+        [ -f "$conf" ] || continue
+        iface="$(basename "$conf" .conf)"
+        ip link del dev "$iface" 2>/dev/null || true
+    done
+}
+
+status() {
+    if command -v wg >/dev/null 2>&1; then
+        wg show
+    else
+        echo "wg binary not found"
+        exit 1
+    fi
+}
+
+case "${1:-start}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; start ;;
+    status) status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

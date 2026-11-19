@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+ROOT_FSTYPE="$(awk '$2 == "/" {print $3; exit}' /proc/mounts)"
+if [ "$ROOT_FSTYPE" != "iso9660" ]; then
+    sync
+    echo "Sistem berjalan langsung dari disk ($ROOT_FSTYPE). Semua perubahan di /etc sudah persisten."
+    exit 0
+fi
+
+DATA_DEV="$(blkid 2>/dev/null | awk -F: '/LABEL="MINIDATA"/ {print $1; exit}')"
+if [ -z "$DATA_DEV" ] || [ ! -b "$DATA_DEV" ]; then
+    echo "Partisi berlabel MINIDATA tidak ditemukan."
+    echo "Untuk menyimpan permanen tanpa ISO, jalankan: install-to-disk /dev/vda (atau /dev/sda)."
+    exit 1
+fi
+
+TMP_MNT="/tmp/mnt-minidata"
+mkdir -p "$TMP_MNT"
+mount "$DATA_DEV" "$TMP_MNT"
+
+FILES=""
+for p in /etc/dropbear /etc/wireguard /etc/network.conf /etc/shadow /etc/passwd /etc/hostname /root/.ssh; do
+    if [ -e "$p" ]; then
+        FILES="$FILES ${p#/}"
+    fi
+done
+
+if [ -z "$FILES" ]; then
+    umount "$TMP_MNT"
+    rmdir "$TMP_MNT" 2>/dev/null || true
+    echo "Tidak ada file konfigurasi untuk disimpan."
+    exit 0
+fi
+
+# shellcheck disable=SC2086
+tar -czf "$TMP_MNT/minilinux-config.tar.gz" -C / $FILES
+sync
+umount "$TMP_MNT"
+rmdir "$TMP_MNT" 2>/dev/null || true
+echo "Konfigurasi berhasil disimpan ke $DATA_DEV (/minilinux-config.tar.gz)."

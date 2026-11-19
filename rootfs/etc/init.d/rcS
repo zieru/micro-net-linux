@@ -1,0 +1,66 @@
+#!/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+# 1. Core virtual filesystems
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+
+mkdir -p /dev/pts /dev/shm /dev/net
+mount -t devpts devpts /dev/pts -o gid=5,mode=620
+mount -t tmpfs tmpfs /dev/shm -o size=2M,nosuid,nodev
+[ -c /dev/net/tun ] || mknod -m 666 /dev/net/tun c 10 200 2>/dev/null || true
+
+# 2. Tightly bounded tmpfs for ephemeral runtime dirs (128 MB RAM budget)
+mount -t tmpfs tmpfs /run -o size=1M,nosuid,nodev,mode=0755
+mount -t tmpfs tmpfs /tmp -o size=8M,nosuid,nodev,mode=1777
+mount -t tmpfs tmpfs /var -o size=2M,nosuid,nodev,mode=0755
+mkdir -p /var/log /var/run /var/empty /var/lock
+
+# 3. Detect root filesystem mode (Live ISO vs persistent ext2 disk)
+ROOT_FSTYPE="$(awk '$2 == "/" {print $3; exit}' /proc/mounts)"
+if [ "$ROOT_FSTYPE" = "iso9660" ]; then
+    mkdir -p /run/ovl
+    mount -t tmpfs tmpfs /run/ovl -o size=4M,mode=0755
+    mkdir -p /run/ovl/etc-u /run/ovl/etc-w /run/ovl/root-u /run/ovl/root-w
+    mount -t overlay overlay -o lowerdir=/etc,upperdir=/run/ovl/etc-u,workdir=/run/ovl/etc-w /etc
+    mount -t overlay overlay -o lowerdir=/root,upperdir=/run/ovl/root-u,workdir=/run/ovl/root-w /root
+
+    # Restore saved configuration from MINIDATA partition if present
+    DATA_DEV="$(blkid 2>/dev/null | awk -F: '/LABEL="MINIDATA"/ {print $1; exit}')"
+    if [ -n "$DATA_DEV" ] && [ -b "$DATA_DEV" ]; then
+        if mount -o ro "$DATA_DEV" /mnt 2>/dev/null; then
+            if [ -f /mnt/minilinux-config.tar.gz ]; then
+                tar -xzf /mnt/minilinux-config.tar.gz -C / 2>/dev/null || true
+            fi
+            umount /mnt 2>/dev/null || true
+        fi
+    fi
+else
+    mount -o remount,rw / 2>/dev/null || true
+fi
+
+# 4. System hostname, file limits & sysctl tuning
+[ -f /etc/hostname ] && hostname "$(cat /etc/hostname)" 2>/dev/null || true
+ulimit -n 16384 2>/dev/null || true
+[ -f /etc/sysctl.conf ] && sysctl -p /etc/sysctl.conf >/dev/null 2>&1 || true
+
+# 5. Start init services
+for svc in /etc/init.d/S*; do
+    if [ -x "$svc" ]; then
+        "$svc" start
+    fi
+done
+
+# 6. Boot summary banner
+IP4="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2": "$4}' | tr '\n' ' ')"
+MEM_INFO="$(free -m 2>/dev/null | awk '/^Mem:/ {printf "Total: %sMB | Used: %sMB | Avail/Free: %sMB", $2, $3, ($7 != "" ? $7 : $4)}')"
+echo ""
+echo "=============================================================="
+echo " Mini-Linux 128MB (Zero-Initramfs | WireGuard | VLESS-Ready)"
+echo " RootFS : ${ROOT_FSTYPE:-unknown} | Kernel: $(uname -r)"
+echo " Memory : ${MEM_INFO:-N/A}"
+echo " IPv4   : ${IP4:-pending/none}"
+echo " Tools  : check-readiness | install-to-disk | save-config"
+echo "=============================================================="
+echo ""

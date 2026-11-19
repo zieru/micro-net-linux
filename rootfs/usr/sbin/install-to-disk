@@ -1,0 +1,110 @@
+#!/bin/sh
+set -eu
+
+IMG_GZ="/boot/mini-linux.img.gz"
+
+usage() {
+    echo "Usage: install-to-disk <block-device> [--yes]"
+    echo "Contoh:"
+    echo "  install-to-disk /dev/vda    # Cloud VPS (KVM / VirtIO)"
+    echo "  install-to-disk /dev/sda    # VirtualBox / SATA / IDE"
+    exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || { echo "ERROR: Harus dijalankan sebagai root."; exit 1; }
+[ $# -ge 1 ] || usage
+
+TARGET="$1"
+AUTO_YES="${2:-}"
+
+if [ ! -f "$IMG_GZ" ]; then
+    echo "ERROR: $IMG_GZ tidak ditemukan. Pastikan Anda booting dari Live ISO."
+    exit 1
+fi
+
+if [ ! -b "$TARGET" ]; then
+    echo "ERROR: $TARGET bukan block device yang valid."
+    echo "Disk yang terdeteksi:"
+    ls /dev/sd* /dev/vd* 2>/dev/null || true
+    exit 1
+fi
+
+case "$TARGET" in
+    *[0-9])
+        echo "ERROR: Gunakan device disk utama (misal /dev/vda atau /dev/sda), bukan partisi ($TARGET)."
+        exit 1
+        ;;
+esac
+
+if grep -q "^${TARGET}" /proc/mounts; then
+    echo "ERROR: Partisi pada $TARGET sedang ter-mount. Unmount terlebih dahulu."
+    exit 1
+fi
+
+if [ "$AUTO_YES" != "--yes" ]; then
+    echo "PERINGATAN: Seluruh data pada $TARGET akan DIHAPUS dan diganti dengan Mini-Linux."
+    printf "Lanjutkan instalasi ke %s? [y/N]: " "$TARGET"
+    read -r ans
+    case "$ans" in
+        y|Y|yes|YES) ;;
+        *) echo "Dibatalkan."; exit 0 ;;
+    esac
+fi
+
+echo "[1/4] Menulis image sistem (zero-initramfs) ke $TARGET..."
+gzip -dc "$IMG_GZ" | dd of="$TARGET" bs=1M conv=fsync 2>/dev/null || gzip -dc "$IMG_GZ" | dd of="$TARGET" bs=1M
+sync
+
+echo "[2/4] Membaca ulang tabel partisi $TARGET..."
+if command -v blockdev >/dev/null 2>&1; then
+    blockdev --rereadpt "$TARGET" 2>/dev/null || true
+fi
+sleep 1
+
+case "$TARGET" in
+    *nvme*|*mmcblk*) PART="${TARGET}p1" ;;
+    *) PART="${TARGET}1" ;;
+esac
+if [ ! -b "$PART" ]; then
+    printf "w\n" | fdisk "$TARGET" >/dev/null 2>&1 || true
+    sleep 1
+fi
+
+if [ ! -b "$PART" ]; then
+    echo "ERROR: Partisi $PART tidak muncul setelah penulisan disk."
+    exit 1
+fi
+
+echo "[3/4] Menyesuaikan bootloader EXTLINUX & menyalin konfigurasi..."
+MNT="/tmp/mnt-install"
+mkdir -p "$MNT"
+mount "$PART" "$MNT"
+
+BOOT_LABEL="sda"
+case "$TARGET" in
+    /dev/vd*) BOOT_LABEL="vda" ;;
+esac
+
+if [ -f "$MNT/boot/extlinux/extlinux.conf" ]; then
+    sed -i "s/^DEFAULT .*/DEFAULT $BOOT_LABEL/" "$MNT/boot/extlinux/extlinux.conf"
+fi
+
+# Migrate active runtime customizations (SSH host key, authorized_keys, WireGuard, network, password)
+for item in etc/dropbear etc/wireguard etc/network.conf etc/shadow etc/passwd etc/hostname root/.ssh; do
+    if [ -e "/$item" ]; then
+        mkdir -p "$MNT/$(dirname "$item")"
+        cp -a "/$item" "$MNT/$(dirname "$item")/"
+    fi
+done
+
+sync
+umount "$MNT"
+rmdir "$MNT" 2>/dev/null || true
+
+echo "[4/4] Selesai!"
+echo ""
+echo "Instalasi ke $TARGET berhasil (Boot target default: $BOOT_LABEL)."
+echo "Langkah berikutnya:"
+echo "  1. Matikan/eject Custom ISO dari panel VPS atau VirtualBox."
+echo "  2. Jalankan perintah: reboot"
+echo "Sistem akan booting langsung dari $PART tanpa ISO dan tanpa initramfs."

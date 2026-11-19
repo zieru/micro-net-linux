@@ -1,0 +1,7 @@
+build/
+out/
+*.img
+*.img.gz
+*.iso
+*.vdi
+*.tar.*

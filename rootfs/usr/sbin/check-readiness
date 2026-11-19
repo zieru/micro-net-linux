@@ -1,0 +1,98 @@
+#!/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+PASS=0
+WARN=0
+FAIL=0
+
+ok()   { echo "  [OK]   $1"; PASS=$((PASS + 1)); }
+warn() { echo "  [WARN] $1"; WARN=$((WARN + 1)); }
+fail() { echo "  [FAIL] $1"; FAIL=$((FAIL + 1)); }
+
+echo "=== Mini-Linux 128MB Readiness Check (WireGuard + VLESS REALITY) ==="
+echo ""
+
+# 1. Boot mode & zero initramfs check
+ROOT_FS="$(awk '$2 == "/" {print $3; exit}' /proc/mounts)"
+CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+case "$CMDLINE" in
+    *initrd=*) warn "Kernel cmdline contains initrd= ($CMDLINE)" ;;
+    *) ok "Zero-Initramfs boot verified (rootfstype=$ROOT_FS)" ;;
+esac
+
+# 2. Memory footprint
+MEM_TOTAL="$(awk '/^MemTotal:/ {printf "%.0f", $2/1024}' /proc/meminfo)"
+MEM_AVAIL="$(awk '/^MemAvailable:/ {printf "%.0f", $2/1024}' /proc/meminfo)"
+MEM_USED=$((MEM_TOTAL - MEM_AVAIL))
+if [ "$MEM_USED" -le 15 ]; then
+    ok "RAM footprint: Used=${MEM_USED}MB / Total=${MEM_TOTAL}MB (Available=${MEM_AVAIL}MB)"
+else
+    warn "RAM Used=${MEM_USED}MB / Total=${MEM_TOTAL}MB (Available=${MEM_AVAIL}MB)"
+fi
+
+# 3. Kernel Go runtime syscalls & limits
+if [ -r /proc/sys/vm/overcommit_memory ]; then
+    ok "Kernel sysctl & virtual memory active (kernel $(uname -r))"
+else
+    fail "Proc sysctl missing"
+fi
+
+FD_LIMIT="$(ulimit -n 2>/dev/null || echo 0)"
+if [ "$FD_LIMIT" -ge 16384 ]; then
+    ok "File descriptor limit: ulimit -n = $FD_LIMIT"
+else
+    warn "File descriptor limit rendah: ulimit -n = $FD_LIMIT (disarankan >= 16384)"
+fi
+
+# 4. TCP BBR & Fair Queueing
+CC="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo none)"
+QD="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo none)"
+if [ "$CC" = "bbr" ] && [ "$QD" = "fq" ]; then
+    ok "TCP congestion control = $CC | qdisc = $QD"
+else
+    fail "TCP BBR/FQ tidak aktif (cc=$CC, qdisc=$QD)"
+fi
+
+# 5. WireGuard in-kernel + CLI probe
+if command -v wg >/dev/null 2>&1; then
+    WG_VER="$(wg --version 2>&1 | head -n 1)"
+    if ip link add _wgchk0 type wireguard 2>/dev/null; then
+        ip link del _wgchk0 2>/dev/null || true
+        ok "WireGuard in-kernel + CLI aktif ($WG_VER)"
+    else
+        fail "WireGuard kernel driver gagal membuat interface (_wgchk0)"
+    fi
+else
+    fail "Biner /usr/bin/wg tidak ditemukan"
+fi
+
+# 6. /dev/net/tun
+if [ -c /dev/net/tun ]; then
+    ok "TUN/TAP device (/dev/net/tun) tersedia"
+else
+    fail "/dev/net/tun tidak tersedia"
+fi
+
+# 7. Root CA Certificates (TLS/REALITY)
+if [ -s /etc/ssl/certs/ca-certificates.crt ]; then
+    ok "Root CA bundle tersedia (/etc/ssl/certs/ca-certificates.crt)"
+else
+    fail "Root CA bundle (/etc/ssl/certs/ca-certificates.crt) tidak ditemukan"
+fi
+
+# 8. Hardware clock, NTP & Entropy (VLESS REALITY timestamp tolerance)
+if pidof ntpd >/dev/null 2>&1; then
+    ok "NTP daemon aktif | UTC: $(date -u '+%Y-%m-%d %H:%M:%S')"
+else
+    warn "ntpd tidak berjalan | UTC: $(date -u '+%Y-%m-%d %H:%M:%S')"
+fi
+
+if [ -c /dev/urandom ]; then
+    ok "CSPRNG /dev/urandom tersedia (hwrng: $([ -c /dev/hwrng ] && echo yes || echo no))"
+else
+    fail "/dev/urandom tidak tersedia"
+fi
+
+echo ""
+echo "Ringkasan: PASS=$PASS | WARN=$WARN | FAIL=$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -1,0 +1,17 @@
+# Salin menjadi /etc/wireguard/wg0.conf lalu jalankan:
+#   /etc/init.d/S40wireguard restart
+# Jika dalam mode Live ISO, jalankan `save-config` agar tersimpan.
+
+[Interface]
+PrivateKey = <PRIVATE_KEY_BASE64>
+Address = 10.66.66.2/32
+# MTU = 1420
+# ListenPort = 51820
+# Table = auto   # gunakan `off` jika routing diatur manual/oleh xray
+
+[Peer]
+PublicKey = <PEER_PUBLIC_KEY_BASE64>
+# PresharedKey = <PRESHARED_KEY_BASE64>
+Endpoint = 203.0.113.10:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25

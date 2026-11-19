@@ -1,0 +1,91 @@
+#!/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+detect_iface() {
+    if [ -f /etc/network.conf ]; then
+        # shellcheck disable=SC1091
+        . /etc/network.conf
+        if [ -n "${IFACE:-}" ] && [ -d "/sys/class/net/$IFACE" ]; then
+            echo "$IFACE"
+            return
+        fi
+    fi
+    if [ -d /sys/class/net/eth0 ]; then
+        echo "eth0"
+        return
+    fi
+    for dev in /sys/class/net/*; do
+        name="$(basename "$dev")"
+        case "$name" in
+            lo|wg*|tun*|tap*|sit*|ip6tnl*) continue ;;
+            *) echo "$name"; return ;;
+        esac
+    done
+}
+
+start() {
+    echo "[net] Configuring loopback and network interface..."
+    ip link set lo up
+    ip addr add 127.0.0.1/8 dev lo 2>/dev/null || true
+
+    MODE="dhcp"
+    if [ -f /etc/network.conf ]; then
+        # shellcheck disable=SC1091
+        . /etc/network.conf
+    fi
+
+    IFACE="$(detect_iface)"
+    if [ -z "$IFACE" ]; then
+        echo "[net] WARNING: No Ethernet interface found."
+        return 0
+    fi
+
+    ip link set "$IFACE" up
+
+    if [ "${MODE:-dhcp}" = "static" ] && [ -n "${STATIC_IP:-}" ]; then
+        echo "[net] Applying static IP ($STATIC_IP) on $IFACE..."
+        ip addr flush dev "$IFACE" 2>/dev/null || true
+        ip addr add "$STATIC_IP" dev "$IFACE"
+        if [ -n "${GATEWAY:-}" ]; then
+            ip route replace default via "$GATEWAY" dev "$IFACE"
+        fi
+        if [ -n "${STATIC_IP6:-}" ]; then
+            ip -6 addr add "$STATIC_IP6" dev "$IFACE" 2>/dev/null || true
+        fi
+        if [ -n "${GATEWAY6:-}" ]; then
+            ip -6 route replace default via "$GATEWAY6" dev "$IFACE" 2>/dev/null || true
+        fi
+        if [ -n "${DNS:-}" ]; then
+            : > /etc/resolv.conf
+            for ns in $DNS; do
+                echo "nameserver $ns" >> /etc/resolv.conf
+            done
+        fi
+    else
+        echo "[net] Starting DHCP (udhcpc) on $IFACE..."
+        udhcpc -i "$IFACE" -b -p /run/udhcpc.pid -s /usr/share/udhcpc/default.script >/dev/null 2>&1 || true
+        # Brief wait (up to 3s) so IP is ready before ntpd / banner
+        i=0
+        while [ "$i" -lt 6 ]; do
+            if ip -4 addr show dev "$IFACE" | grep -q "inet "; then
+                break
+            fi
+            sleep 1
+            i=$((i + 1))
+        done
+    fi
+}
+
+stop() {
+    if [ -f /run/udhcpc.pid ]; then
+        kill "$(cat /run/udhcpc.pid)" 2>/dev/null || true
+        rm -f /run/udhcpc.pid
+    fi
+}
+
+case "${1:-start}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

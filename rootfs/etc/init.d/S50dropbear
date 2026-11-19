@@ -1,0 +1,36 @@
+#!/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+KEY_DIR="/etc/dropbear"
+HOST_KEY="$KEY_DIR/dropbear_ed25519_host_key"
+PID_FILE="/run/dropbear.pid"
+
+start() {
+    mkdir -p "$KEY_DIR"
+    chmod 700 "$KEY_DIR"
+
+    if [ ! -s "$HOST_KEY" ]; then
+        echo "[ssh] Generating Ed25519 host key..."
+        dropbearkey -t ed25519 -f "$HOST_KEY" >/dev/null
+        chmod 600 "$HOST_KEY"
+    fi
+
+    echo "[ssh] Starting Dropbear SSH server on port 22..."
+    dropbear -R -E -p 22 -P "$PID_FILE" >/dev/null 2>&1
+}
+
+stop() {
+    if [ -f "$PID_FILE" ]; then
+        kill "$(cat "$PID_FILE")" 2>/dev/null || true
+        rm -f "$PID_FILE"
+    else
+        killall dropbear 2>/dev/null || true
+    fi
+}
+
+case "${1:-start}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
