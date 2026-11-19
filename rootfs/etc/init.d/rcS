@@ -55,6 +55,7 @@ done
 
 # 6. Boot summary banner
 IP4="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2": "$4}' | tr '\n' ' ')"
+IP6="$(ip -6 -o addr show scope global 2>/dev/null | awk '{print $2": "$4}' | tr '\n' ' ')"
 MEM_INFO="$(free -m 2>/dev/null | awk '/^Mem:/ {printf "Total: %sMB | Used: %sMB | Avail/Free: %sMB", $2, $3, ($7 != "" ? $7 : $4)}')"
 SWAP_INFO="$(free -m 2>/dev/null | awk '/^Swap:/ && $2 > 0 {printf " | Swap: %sMB/%sMB", $3, $2}')"
 echo ""
@@ -63,6 +64,7 @@ echo " Mini-Linux 128MB (Zero-Initramfs | WireGuard | x-ui-agent-rs)"
 echo " RootFS : ${ROOT_FSTYPE:-unknown} | Kernel: $(uname -r)"
 echo " Memory : ${MEM_INFO:-N/A}${SWAP_INFO}"
 echo " IPv4   : ${IP4:-pending/none}"
-echo " Tools  : check-readiness | install-to-disk | save-config"
+[ -n "$IP6" ] && echo " IPv6   : $IP6"
+echo " Tools  : netui | check-readiness | install-to-disk | save-config"
 echo "=============================================================="
 echo ""

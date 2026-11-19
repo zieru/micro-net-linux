@@ -33,6 +33,7 @@ mkdir -p "$ROOTFS_DIR"
 "$ROOT_DIR/scripts/03b-build-wireguard.sh"
 "$ROOT_DIR/scripts/03c-build-e2fsprogs.sh"
 "$ROOT_DIR/scripts/03d-build-htop.sh"
+"$ROOT_DIR/scripts/03e-build-tinyssh.sh"
 "$ROOT_DIR/scripts/04-assemble-rootfs.sh"
 "$ROOT_DIR/scripts/05-pack-images.sh"
 

@@ -1,0 +1,180 @@
+#!/bin/sh
+set -eu
+
+CONF="/etc/network.conf"
+
+[ "$(id -u)" -eq 0 ] || { echo "ERROR: Harus dijalankan sebagai root."; exit 1; }
+
+detect_ifaces() {
+    for dev in /sys/class/net/*; do
+        [ -e "$dev" ] || continue
+        n="$(basename "$dev")"
+        case "$n" in
+            lo|wg*|tun*|tap*|sit*|ip6tnl*) continue ;;
+            *) echo "$n" ;;
+        esac
+    done
+}
+
+load_current() {
+    MODE="dhcp"
+    MODE6="slaac"
+    IFACE=""
+    STATIC_IP=""
+    GATEWAY=""
+    STATIC_IP6=""
+    GATEWAY6=""
+    DNS="1.1.1.1 8.8.8.8"
+    if [ -f "$CONF" ]; then
+        # shellcheck disable=SC1090
+        . "$CONF"
+    fi
+    if [ -z "$IFACE" ]; then
+        IFACE="$(detect_ifaces | head -n 1)"
+        [ -n "$IFACE" ] || IFACE="eth0"
+    fi
+}
+
+show_status() {
+    clear 2>/dev/null || true
+    CUR_V4="$(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+    CUR_V6="$(ip -6 -o addr show dev "$IFACE" scope global 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+    echo "=============================================================="
+    echo "  netui — Mini-Linux Dual-Stack Network Configuration"
+    echo "=============================================================="
+    echo "  Interface : $IFACE"
+    echo "  IPv4 Mode : ${MODE:-dhcp} ${STATIC_IP:+($STATIC_IP)} ${GATEWAY:+gw $GATEWAY}"
+    echo "  IPv6 Mode : ${MODE6:-slaac} ${STATIC_IP6:+($STATIC_IP6)} ${GATEWAY6:+gw $GATEWAY6}"
+    echo "  DNS       : ${DNS:-auto}"
+    echo "--------------------------------------------------------------"
+    echo "  Active v4 : ${CUR_V4:-none}"
+    echo "  Active v6 : ${CUR_V6:-none}"
+    echo "=============================================================="
+    echo ""
+}
+
+write_conf() {
+    cat > "$CONF" << EOF
+# Konfigurasi Jaringan Mini-Linux (dikelola oleh netui / S20network)
+IFACE="$IFACE"
+MODE="$MODE"
+STATIC_IP="$STATIC_IP"
+GATEWAY="$GATEWAY"
+MODE6="$MODE6"
+STATIC_IP6="$STATIC_IP6"
+GATEWAY6="$GATEWAY6"
+DNS="$DNS"
+EOF
+    chmod 0644 "$CONF"
+}
+
+load_current
+
+while true; do
+    show_status
+    echo "  1) Pilih Interface ($IFACE)"
+    echo "  2) Konfigurasi IPv4 (${MODE:-dhcp})"
+    echo "  3) Konfigurasi IPv6 (${MODE6:-slaac})"
+    echo "  4) Ubah DNS ($DNS)"
+    echo "  5) Simpan & Terapkan Sekarang (/etc/init.d/S20network restart)"
+    echo "  6) Keluar tanpa menerapkan"
+    echo ""
+    printf "Pilih menu [1-6]: "
+    read -r choice
+    case "$choice" in
+        1)
+            echo ""
+            echo "Interface terdeteksi:"
+            for i in $(detect_ifaces); do
+                echo "  - $i"
+            done
+            printf "Masukkan nama interface [%s]: " "$IFACE"
+            read -r in_iface
+            [ -n "$in_iface" ] && IFACE="$in_iface"
+            ;;
+        2)
+            echo ""
+            echo "Mode IPv4:"
+            echo "  1) DHCP (otomatis)"
+            echo "  2) Static IPv4"
+            echo "  3) Off (nonaktifkan IPv4)"
+            printf "Pilihan [1-3]: "
+            read -r m4
+            case "$m4" in
+                2)
+                    MODE="static"
+                    printf "IPv4/CIDR (contoh 192.168.1.10/24) [%s]: " "$STATIC_IP"
+                    read -r in_v4
+                    [ -n "$in_v4" ] && STATIC_IP="$in_v4"
+                    printf "Gateway IPv4 (contoh 192.168.1.1) [%s]: " "$GATEWAY"
+                    read -r in_gw4
+                    [ -n "$in_gw4" ] && GATEWAY="$in_gw4"
+                    ;;
+                3)
+                    MODE="off"
+                    STATIC_IP=""
+                    GATEWAY=""
+                    ;;
+                *)
+                    MODE="dhcp"
+                    STATIC_IP=""
+                    GATEWAY=""
+                    ;;
+            esac
+            ;;
+        3)
+            echo ""
+            echo "Mode IPv6:"
+            echo "  1) SLAAC / Auto (Router Advertisement)"
+            echo "  2) Static IPv6"
+            echo "  3) Off (nonaktifkan IPv6)"
+            printf "Pilihan [1-3]: "
+            read -r m6
+            case "$m6" in
+                2)
+                    MODE6="static"
+                    printf "IPv6/Prefix (contoh 2001:db8::10/64) [%s]: " "$STATIC_IP6"
+                    read -r in_v6
+                    [ -n "$in_v6" ] && STATIC_IP6="$in_v6"
+                    printf "Gateway IPv6 (contoh 2001:db8::1) [%s]: " "$GATEWAY6"
+                    read -r in_gw6
+                    [ -n "$in_gw6" ] && GATEWAY6="$in_gw6"
+                    ;;
+                3)
+                    MODE6="off"
+                    STATIC_IP6=""
+                    GATEWAY6=""
+                    ;;
+                *)
+                    MODE6="slaac"
+                    STATIC_IP6=""
+                    GATEWAY6=""
+                    ;;
+            esac
+            ;;
+        4)
+            echo ""
+            printf "DNS Servers (pisahkan spasi, misal '1.1.1.1 2606:4700:4700::1111') [%s]: " "$DNS"
+            read -r in_dns
+            [ -n "$in_dns" ] && DNS="$in_dns"
+            ;;
+        5)
+            write_conf
+            echo ""
+            echo "[netui] Menerapkan konfigurasi..."
+            /etc/init.d/S20network restart
+            ROOT_FS="$(awk '$2 == "/" {print $3; exit}' /proc/mounts)"
+            if [ "$ROOT_FS" = "iso9660" ]; then
+                echo "[netui] Anda berjalan di Live ISO. Jalankan 'save-config' agar tersimpan ke MINIDATA."
+            else
+                echo "[netui] Konfigurasi tersimpan permanen di $CONF."
+            fi
+            exit 0
+            ;;
+        6)
+            echo "Dibatalkan."
+            exit 0
+            ;;
+        *) ;;
+    esac
+done

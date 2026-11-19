@@ -29,6 +29,7 @@ start() {
     ip addr add 127.0.0.1/8 dev lo 2>/dev/null || true
 
     MODE="dhcp"
+    MODE6="slaac"
     if [ -f /etc/network.conf ]; then
         # shellcheck disable=SC1091
         . /etc/network.conf
@@ -42,36 +43,64 @@ start() {
 
     ip link set "$IFACE" up
 
-    if [ "${MODE:-dhcp}" = "static" ] && [ -n "${STATIC_IP:-}" ]; then
-        echo "[net] Applying static IP ($STATIC_IP) on $IFACE..."
-        ip addr flush dev "$IFACE" 2>/dev/null || true
-        ip addr add "$STATIC_IP" dev "$IFACE"
-        if [ -n "${GATEWAY:-}" ]; then
-            ip route replace default via "$GATEWAY" dev "$IFACE"
-        fi
-        if [ -n "${STATIC_IP6:-}" ]; then
-            ip -6 addr add "$STATIC_IP6" dev "$IFACE" 2>/dev/null || true
-        fi
-        if [ -n "${GATEWAY6:-}" ]; then
-            ip -6 route replace default via "$GATEWAY6" dev "$IFACE" 2>/dev/null || true
-        fi
-        if [ -n "${DNS:-}" ]; then
-            : > /etc/resolv.conf
-            for ns in $DNS; do
-                echo "nameserver $ns" >> /etc/resolv.conf
-            done
-        fi
-    else
-        echo "[net] Starting DHCP (udhcpc) on $IFACE..."
-        udhcpc -i "$IFACE" -b -p /run/udhcpc.pid -s /usr/share/udhcpc/default.script >/dev/null 2>&1 || true
-        # Brief wait (up to 3s) so IP is ready before ntpd / banner
-        i=0
-        while [ "$i" -lt 6 ]; do
-            if ip -4 addr show dev "$IFACE" | grep -q "inet "; then
-                break
+    # --- IPv4 Configuration ---
+    case "${MODE:-dhcp}" in
+        static)
+            if [ -n "${STATIC_IP:-}" ]; then
+                echo "[net] Applying static IPv4 ($STATIC_IP) on $IFACE..."
+                ip -4 addr flush dev "$IFACE" 2>/dev/null || true
+                ip -4 addr add "$STATIC_IP" dev "$IFACE"
+                if [ -n "${GATEWAY:-}" ]; then
+                    ip -4 route replace default via "$GATEWAY" dev "$IFACE"
+                fi
             fi
-            sleep 1
-            i=$((i + 1))
+            ;;
+        off|none)
+            echo "[net] IPv4 disabled on $IFACE."
+            ip -4 addr flush dev "$IFACE" 2>/dev/null || true
+            ;;
+        *)
+            echo "[net] Starting IPv4 DHCP (udhcpc) on $IFACE..."
+            udhcpc -i "$IFACE" -b -p /run/udhcpc.pid -s /usr/share/udhcpc/default.script >/dev/null 2>&1 || true
+            i=0
+            while [ "$i" -lt 6 ]; do
+                if ip -4 addr show dev "$IFACE" | grep -q "inet "; then
+                    break
+                fi
+                sleep 1
+                i=$((i + 1))
+            done
+            ;;
+    esac
+
+    # --- IPv6 Dual-Stack Configuration ---
+    case "${MODE6:-slaac}" in
+        static)
+            if [ -n "${STATIC_IP6:-}" ]; then
+                echo "[net] Applying static IPv6 ($STATIC_IP6) on $IFACE..."
+                sysctl -w "net.ipv6.conf.$IFACE.disable_ipv6=0" >/dev/null 2>&1 || true
+                ip -6 addr flush dev "$IFACE" scope global 2>/dev/null || true
+                ip -6 addr add "$STATIC_IP6" dev "$IFACE" 2>/dev/null || true
+                if [ -n "${GATEWAY6:-}" ]; then
+                    ip -6 route replace default via "$GATEWAY6" dev "$IFACE" 2>/dev/null || true
+                fi
+            fi
+            ;;
+        off|none)
+            echo "[net] IPv6 disabled on $IFACE."
+            sysctl -w "net.ipv6.conf.$IFACE.disable_ipv6=1" >/dev/null 2>&1 || true
+            ;;
+        *)
+            sysctl -w "net.ipv6.conf.$IFACE.disable_ipv6=0" >/dev/null 2>&1 || true
+            sysctl -w "net.ipv6.conf.$IFACE.accept_ra=1" >/dev/null 2>&1 || true
+            ;;
+    esac
+
+    # --- DNS ---
+    if [ -n "${DNS:-}" ] && [ "${MODE:-dhcp}" != "dhcp" ]; then
+        : > /etc/resolv.conf
+        for ns in $DNS; do
+            echo "nameserver $ns" >> /etc/resolv.conf
         done
     fi
 }

@@ -3,8 +3,19 @@ name: Build Mini-Linux 128MB
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v0.1.*'
   workflow_dispatch:
     inputs:
+      version:
+        description: "Release version (0.1.x, default from VERSION file)"
+        required: false
+        default: ""
+      create_release:
+        description: "Create GitHub Release for this ISO"
+        type: boolean
+        required: false
+        default: false
       root_password:
         description: "Initial root password (default: minilinux)"
         required: false
@@ -14,6 +25,9 @@ on:
         type: boolean
         required: false
         default: false
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -27,6 +41,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve release version (0.1.x)
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VER="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF#refs/tags/v}"
+          else
+            VER="$(tr -d '[:space:]' < VERSION)"
+          fi
+          VER="${VER#v}"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_VERSION=${VER}" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -49,7 +77,6 @@ jobs:
             xorriso \
             e2fsprogs \
             fdisk \
-            qemu-utils \
             binutils \
             ca-certificates \
             curl \
@@ -66,7 +93,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/dl
-          key: mini-linux-sources-v2-${{ hashFiles('scripts/common.sh') }}
+          key: mini-linux-sources-v3-${{ hashFiles('scripts/common.sh') }}
 
       - name: Restore compiled kernel cache
         id: cache-kernel
@@ -89,7 +116,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/cache/busybox
-          key: mini-linux-busybox-v2-${{ hashFiles('configs/busybox-mini.fragment', 'scripts/02-build-busybox.sh', 'scripts/common.sh') }}
+          key: mini-linux-busybox-v3-${{ hashFiles('configs/busybox-mini.fragment', 'scripts/02-build-busybox.sh', 'scripts/common.sh') }}
 
       - name: Restore x-ui-agent-rs cache
         id: cache-agent
@@ -118,6 +145,13 @@ jobs:
         with:
           path: build/cache/htop
           key: mini-linux-htop-v1-${{ hashFiles('scripts/03d-build-htop.sh', 'scripts/common.sh') }}
+
+      - name: Restore TinySSH cache
+        id: cache-tinyssh
+        uses: actions/cache/restore@v4
+        with:
+          path: build/cache/tinyssh
+          key: mini-linux-tinyssh-v1-${{ hashFiles('scripts/03e-build-tinyssh.sh', 'scripts/common.sh') }}
 
       - name: Prepare clean rootfs and script permissions
         run: |
@@ -192,6 +226,16 @@ jobs:
           path: build/cache/htop
           key: ${{ steps.cache-htop.outputs.cache-primary-key }}
 
+      - name: Build TinySSH (static musl)
+        run: bash scripts/03e-build-tinyssh.sh
+
+      - name: Save TinySSH cache
+        if: steps.cache-tinyssh.outputs.cache-hit != 'true' && hashFiles('build/cache/tinyssh/tinysshd') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/tinyssh
+          key: ${{ steps.cache-tinyssh.outputs.cache-primary-key }}
+
       - name: Save upstream source tarballs cache
         if: always() && steps.cache-dl.outputs.cache-hit != 'true' && hashFiles('build/dl/*') != ''
         uses: actions/cache/save@v4
@@ -199,25 +243,30 @@ jobs:
           path: build/dl
           key: ${{ steps.cache-dl.outputs.cache-primary-key }}
 
-      - name: Assemble RootFS & Pack Images (.img / .vdi / .iso)
+      - name: Assemble RootFS & Pack ISO (.iso only)
         run: |
           bash scripts/04-assemble-rootfs.sh
           bash scripts/05-pack-images.sh
+          ls -lh out/
 
-      - name: Generate SHA256SUMS
-        run: |
-          cd out
-          sha256sum bzImage mini-linux.img mini-linux.iso mini-linux.vdi > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Upload build artifacts
+      - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mini-linux-128mb-x86_64
-          path: |
-            out/mini-linux.iso
-            out/mini-linux.img
-            out/mini-linux.vdi
-            out/bzImage
-            out/SHA256SUMS.txt
+          name: mini-linux-v${{ steps.ver.outputs.version }}-x86_64-iso
+          path: out/mini-linux-*.iso
           retention-days: 30
+
+      - name: Create GitHub Release (ISO only)
+        if: startsWith(github.ref, 'refs/tags/v0.1.') || inputs.create_release == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          ISO_FILE="out/mini-linux-${TAG}.iso"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ISO_FILE" --clobber
+          else
+            gh release create "$TAG" "$ISO_FILE" \
+              --title "Mini-Linux 128MB ${TAG}" \
+              --notes "Zero-initramfs x86_64 Mini-Linux (${TAG}) with x-ui-agent-rs (embedded shoes), TinySSH (public-key only), WireGuard, htop, netui (dual-stack IPv4/IPv6), and ext4 disk installer."
+          fi

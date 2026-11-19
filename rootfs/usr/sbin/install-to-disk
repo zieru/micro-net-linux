@@ -141,7 +141,7 @@ if [ -f "$MNT/boot/extlinux/extlinux.conf" ]; then
 fi
 
 # Migrate active runtime customizations before interactive overrides
-for item in etc/x-ui-agent etc/wireguard etc/network.conf etc/shadow etc/passwd etc/hostname; do
+for item in etc/x-ui-agent etc/tinyssh etc/wireguard etc/network.conf etc/shadow etc/passwd etc/hostname root/.ssh; do
     if [ -e "/$item" ]; then
         mkdir -p "$MNT/$(dirname "$item")"
         cp -a "/$item" "$MNT/$(dirname "$item")/"
@@ -245,39 +245,60 @@ if [ "$AUTO_YES" -ne 1 ]; then
             printf "Gateway IPv4 (contoh 192.168.1.1, kosongkan jika tidak ada): "
             read -r IN_GW
 
+            printf "Konfigurasi IPv6 juga? (1=SLAAC Auto, 2=Static IPv6, 3=Off) [1]: "
+            read -r m6
+            IN_MODE6="slaac"
+            IN_IP6=""
+            IN_GW6=""
+            case "$m6" in
+                2)
+                    IN_MODE6="static"
+                    printf "IPv6 Address/Prefix (contoh 2001:db8::10/64): "
+                    read -r IN_IP6
+                    printf "Gateway IPv6 (contoh 2001:db8::1, kosongkan jika tidak ada): "
+                    read -r IN_GW6
+                    ;;
+                3) IN_MODE6="off" ;;
+                *) IN_MODE6="slaac" ;;
+            esac
+
             printf "DNS Server (pisahkan spasi, default '1.1.1.1 8.8.8.8'): "
             read -r IN_DNS
             [ -n "$IN_DNS" ] || IN_DNS="1.1.1.1 8.8.8.8"
 
             cat > "$MNT/etc/network.conf" << EOF
-MODE="static"
 IFACE="$IN_IFACE"
+MODE="static"
 STATIC_IP="$IN_IP"
 GATEWAY="$IN_GW"
+MODE6="$IN_MODE6"
+STATIC_IP6="$IN_IP6"
+GATEWAY6="$IN_GW6"
 DNS="$IN_DNS"
 EOF
             chmod 0644 "$MNT/etc/network.conf"
-            NET_MODE_DESC="Static ($IN_IP via $IN_IFACE)"
+            NET_MODE_DESC="Static ($IN_IP | IPv6: $IN_MODE6)"
             ;;
         3)
             if [ -f "$MNT/etc/network.conf" ]; then
                 NET_MODE_DESC="Existing /etc/network.conf"
             else
-                echo 'MODE="dhcp"' > "$MNT/etc/network.conf"
+                printf 'MODE="dhcp"\nMODE6="slaac"\n' > "$MNT/etc/network.conf"
             fi
             ;;
         *)
-            echo 'MODE="dhcp"' > "$MNT/etc/network.conf"
+            printf 'MODE="dhcp"\nMODE6="slaac"\n' > "$MNT/etc/network.conf"
             chmod 0644 "$MNT/etc/network.conf"
-            NET_MODE_DESC="DHCP"
+            NET_MODE_DESC="DHCP + IPv6 SLAAC"
             ;;
     esac
 fi
 
-# --- Step 6: Interactive Root Password ---
+# --- Step 6: Interactive Root Password & Optional TinySSH Key ---
 echo ""
-echo "[6/6] Konfigurasi Password Root"
+echo "[6/6] Konfigurasi Password Root & SSH Key (TinySSH)"
 PW_STATUS="Dipertahankan"
+SSH_KEY_STATUS="Tidak diubah"
 if [ "$AUTO_YES" -ne 1 ]; then
     read_secret() {
         if command -v stty >/dev/null 2>&1; then
@@ -311,6 +332,17 @@ if [ "$AUTO_YES" -ne 1 ]; then
             echo "Password tidak cocok, silakan ulangi."
         fi
     done
+
+    echo ""
+    printf "Tempel SSH public key (ssh-ed25519 ...) untuk TinySSH (kosongkan jika lewati): "
+    read -r IN_SSH_PUB
+    if [ -n "$IN_SSH_PUB" ]; then
+        mkdir -p "$MNT/root/.ssh"
+        chmod 0700 "$MNT/root/.ssh"
+        echo "$IN_SSH_PUB" >> "$MNT/root/.ssh/authorized_keys"
+        chmod 0600 "$MNT/root/.ssh/authorized_keys"
+        SSH_KEY_STATUS="Ditambahkan ke /root/.ssh/authorized_keys"
+    fi
 fi
 
 sync
@@ -325,7 +357,8 @@ echo "   Boot Target  : $BOOT_LABEL"
 echo "   Swap         : ${SWAP_MB} MB"
 echo "   Jaringan     : $NET_MODE_DESC"
 echo "   Password Root: $PW_STATUS"
-echo "   Agent State  : /etc/x-ui-agent (Dropbear dihapus)"
+echo "   TinySSH Key  : $SSH_KEY_STATUS"
+echo "   Agent State  : /etc/x-ui-agent (x-ui-agent-rs)"
 echo "=============================================================="
 echo "Langkah berikutnya:"
 echo "  1. Matikan/eject Custom ISO dari panel VPS atau VirtualBox."

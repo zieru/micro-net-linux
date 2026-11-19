@@ -20,9 +20,8 @@ find_syslinux_file() {
     return 1
 }
 
-IMG_PATH="$OUT_DIR/mini-linux.img"
-VDI_PATH="$OUT_DIR/mini-linux.vdi"
-ISO_PATH="$OUT_DIR/mini-linux.iso"
+IMG_PATH="$BUILD_DIR/mini-linux.img"
+ISO_PATH="$OUT_DIR/mini-linux-v${RELEASE_VERSION}.iso"
 IMG_MNT="$BUILD_DIR/img-mnt"
 ISO_ROOT="$BUILD_DIR/iso-root"
 
@@ -39,10 +38,10 @@ cleanup() {
 trap cleanup EXIT
 
 # ==============================================================================
-# Part A: Build 64 MB Zero-Initramfs Raw Disk Image (.img) + Optional .vdi
+# Part A: Build 64 MB Zero-Initramfs Temp Disk Image (embedded into ISO)
 # ==============================================================================
-log "Creating 64 MB zero-initramfs disk image: $IMG_PATH..."
-rm -f "$IMG_PATH" "$VDI_PATH"
+log "Creating 64 MB temporary ext4 disk image: $IMG_PATH..."
+rm -f "$IMG_PATH" "$OUT_DIR"/*
 truncate -s 64M "$IMG_PATH"
 
 printf 'label: dos\nstart=2048, type=83, bootable\n' | sfdisk "$IMG_PATH" >/dev/null
@@ -93,12 +92,7 @@ sync
 sudo losetup -d "$LOOP_DEV"
 LOOP_DEV=""
 
-log "Disk image ready: $IMG_PATH ($(du -h "$IMG_PATH" | cut -f1))"
-
-if command -v qemu-img >/dev/null 2>&1; then
-    qemu-img convert -f raw -O vdi "$IMG_PATH" "$VDI_PATH"
-    log "VirtualBox VDI ready: $VDI_PATH ($(du -h "$VDI_PATH" | cut -f1))"
-fi
+log "Temp disk image ready: $IMG_PATH ($(du -h "$IMG_PATH" | cut -f1))"
 
 # ==============================================================================
 # Part B: Build Zero-Initramfs Custom ISO (.iso)
@@ -164,6 +158,6 @@ sudo xorriso -as mkisofs \
     "${XORRISO_HYBRID_ARGS[@]+"${XORRISO_HYBRID_ARGS[@]}"}" \
     "$ISO_ROOT"
 sudo chown "$(id -u):$(id -g)" "$ISO_PATH"
-sudo rm -rf "$ISO_ROOT"
+sudo rm -rf "$ISO_ROOT" "$IMG_PATH"
 
 log "ISO ready: $ISO_PATH ($(du -h "$ISO_PATH" | cut -f1))"

@@ -1,0 +1,48 @@
+#!/bin/sh
+# BusyBox /etc/init.d/S55tinyssh for zieru/micro-net-linux
+# Runs TinySSH on-demand via BusyBox tcpsvd (public-key only, modern crypto).
+
+DAEMON="/usr/sbin/tinysshd"
+MAKEKEY="/usr/sbin/tinysshd-makekey"
+PIDFILE="/run/tinyssh.pid"
+CONF_FILE="/etc/tinyssh/tinyssh.conf"
+
+TINYSSH_LISTEN="0.0.0.0"
+TINYSSH_PORT="22"
+TINYSSH_KEYDIR="/etc/tinyssh/sshkeydir"
+
+[ -f "$CONF_FILE" ] && . "$CONF_FILE"
+[ -x "$DAEMON" ] || exit 0
+
+start() {
+    mkdir -p /etc/tinyssh /root/.ssh
+    chmod 0700 /etc/tinyssh /root/.ssh
+
+    if [ ! -d "$TINYSSH_KEYDIR" ] || [ -z "$(ls -A "$TINYSSH_KEYDIR" 2>/dev/null)" ]; then
+        echo "[tinyssh] Generating Ed25519 host key in $TINYSSH_KEYDIR..."
+        "$MAKEKEY" "$TINYSSH_KEYDIR"
+        chmod 0700 "$TINYSSH_KEYDIR"
+    fi
+
+    echo "[tinyssh] Starting tcpsvd on ${TINYSSH_LISTEN}:${TINYSSH_PORT} (public-key only)..."
+    start-stop-daemon -S -b -m -p "$PIDFILE" \
+        -x /bin/busybox -- tcpsvd -E "$TINYSSH_LISTEN" "$TINYSSH_PORT" \
+        "$DAEMON" -l "$TINYSSH_KEYDIR" >/var/log/tinyssh.log 2>&1
+}
+
+stop() {
+    echo "[tinyssh] Stopping tcpsvd..."
+    if [ -f "$PIDFILE" ]; then
+        start-stop-daemon -K -p "$PIDFILE" -s TERM 2>/dev/null || true
+        rm -f "$PIDFILE"
+    else
+        killall tcpsvd 2>/dev/null || true
+    fi
+}
+
+case "${1:-start}" in
+    start) start ;;
+    stop) stop ;;
+    restart|reload) stop; sleep 1; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

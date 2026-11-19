@@ -104,6 +104,23 @@ else
     fail "Biner /usr/local/bin/x-ui-agent-rs tidak ditemukan"
 fi
 
+# 10. TinySSH (public-key only via tcpsvd) & netui
+if [ -x /usr/sbin/tinysshd ]; then
+    if [ -f /run/tinyssh.pid ] && kill -0 "$(cat /run/tinyssh.pid 2>/dev/null)" 2>/dev/null; then
+        ok "TinySSH (tcpsvd) aktif (public-key only)"
+    else
+        warn "TinySSH terpasang namun tcpsvd belum berjalan"
+    fi
+else
+    fail "Biner /usr/sbin/tinysshd tidak ditemukan"
+fi
+
+if [ -x /usr/sbin/netui ]; then
+    ok "netui tersedia (dual-stack network TUI)"
+else
+    warn "netui tidak ditemukan"
+fi
+
 echo ""
 echo "Ringkasan: PASS=$PASS | WARN=$WARN | FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
