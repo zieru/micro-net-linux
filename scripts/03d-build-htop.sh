@@ -59,6 +59,9 @@ if [ ! -f "$NC_PREFIX/lib/libncurses.a" ]; then
         --without-progs \
         --without-tests \
         --disable-db-install \
+        --without-gpm \
+        --without-dlsym \
+        --enable-overwrite \
         --with-default-terminfo-dir=/usr/share/terminfo \
         CC="musl-gcc $MUSL_INC_FLAGS" \
         CFLAGS="-Os -ffunction-sections -fdata-sections"
@@ -88,8 +91,13 @@ log "Configuring htop ${HTOP_VERSION} (static musl)..."
     --disable-capabilities \
     --disable-hwloc \
     CC="musl-gcc $MUSL_INC_FLAGS" \
-    CFLAGS="-Os -ffunction-sections -fdata-sections -I$NC_PREFIX/include" \
-    LDFLAGS="-static -no-pie -Wl,--gc-sections -L$NC_PREFIX/lib"
+    CPPFLAGS="-I$NC_PREFIX/include" \
+    CFLAGS="-Os -ffunction-sections -fdata-sections" \
+    LDFLAGS="-static -no-pie -Wl,--gc-sections -L$NC_PREFIX/lib" || {
+        ls -la "$NC_PREFIX/lib" "$NC_PREFIX/include" || true
+        grep -A 30 "doupdate" config.log || tail -n 80 config.log || true
+        exit 1
+    }
 
 log "Compiling htop (static musl)..."
 make -j"$JOBS"
