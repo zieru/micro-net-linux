@@ -9,6 +9,11 @@ on:
         description: "Initial root password (default: minilinux)"
         required: false
         default: "minilinux"
+      force_rebuild:
+        description: "Bypass compiled binary caches and rebuild from source"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   build:
@@ -23,6 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
+            ccache \
             bc \
             bison \
             flex \
@@ -49,9 +55,44 @@ jobs:
           path: build/dl
           key: mini-linux-sources-v1-${{ hashFiles('scripts/common.sh') }}
 
+      - name: Cache compiled kernel (bzImage)
+        uses: actions/cache@v4
+        with:
+          path: build/cache/kernel
+          key: mini-linux-kernel-v1-${{ hashFiles('configs/kernel-mini-x86_64.config', 'scripts/01-build-kernel.sh', 'scripts/common.sh') }}
+
+      - name: Cache kernel compiler objects (ccache)
+        uses: actions/cache@v4
+        with:
+          path: build/cache/ccache
+          key: mini-linux-ccache-v1-${{ hashFiles('configs/kernel-mini-x86_64.config', 'scripts/common.sh') }}
+          restore-keys: |
+            mini-linux-ccache-v1-
+
+      - name: Cache compiled BusyBox rootfs
+        uses: actions/cache@v4
+        with:
+          path: build/cache/busybox
+          key: mini-linux-busybox-v1-${{ hashFiles('configs/busybox-mini.fragment', 'scripts/02-build-busybox.sh', 'scripts/common.sh') }}
+
+      - name: Cache compiled Dropbear SSH
+        uses: actions/cache@v4
+        with:
+          path: build/cache/dropbear
+          key: mini-linux-dropbear-v1-${{ hashFiles('configs/dropbear-localoptions.h', 'scripts/03-build-dropbear.sh', 'scripts/common.sh') }}
+
+      - name: Cache compiled WireGuard CLI (wg)
+        uses: actions/cache@v4
+        with:
+          path: build/cache/wireguard
+          key: mini-linux-wireguard-v1-${{ hashFiles('scripts/03b-build-wireguard.sh', 'scripts/common.sh') }}
+
       - name: Build Mini-Linux (Kernel + BusyBox + Dropbear + WireGuard + Images)
         env:
           ROOT_PASSWORD: ${{ inputs.root_password || 'minilinux' }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild == true && '1' || '0' }}
+          CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
+          CCACHE_MAXSIZE: 500M
         run: |
           chmod +x scripts/*.sh
           bash scripts/build-all.sh

@@ -2,6 +2,13 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
+CACHED_BB_TAR="$CACHE_DIR/busybox/busybox-rootfs.tar.gz"
+if [ "$FORCE_REBUILD" != "1" ] && [ -s "$CACHED_BB_TAR" ]; then
+    tar -xzf "$CACHED_BB_TAR" -C "$ROOTFS_DIR"
+    log "Using cached BusyBox rootfs ($(du -h "$ROOTFS_DIR/bin/busybox" | cut -f1))"
+    exit 0
+fi
+
 setup_musl_headers
 
 BB_TARBALL="$DL_DIR/busybox-${BUSYBOX_VERSION}.tar.bz2"
@@ -36,15 +43,23 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
 done < "$FRAG"
 
-yes "" | make oldconfig >/dev/null
+{ yes "" 2>/dev/null || true; } | make oldconfig >/dev/null
 
 log "Compiling BusyBox..."
-make -j"$JOBS" \
-    HOSTCC=gcc \
-    CC="musl-gcc $MUSL_INC_FLAGS" \
-    EXTRA_CFLAGS="-Os -ffunction-sections -fdata-sections" \
+BB_MAKE_ARGS=(
+    HOSTCC=gcc
+    CC="musl-gcc $MUSL_INC_FLAGS"
+    EXTRA_CFLAGS="-Os -ffunction-sections -fdata-sections"
     LDFLAGS="-static -Wl,--gc-sections"
+)
+make -j"$JOBS" "${BB_MAKE_ARGS[@]}"
 
-make CONFIG_PREFIX="$ROOTFS_DIR" install
-strip --strip-all "$ROOTFS_DIR/bin/busybox" 2>/dev/null || true
+BB_STAGE="$BUILD_DIR/busybox-stage"
+rm -rf "$BB_STAGE"
+mkdir -p "$BB_STAGE"
+make "${BB_MAKE_ARGS[@]}" CONFIG_PREFIX="$BB_STAGE" install
+strip --strip-all "$BB_STAGE/bin/busybox" 2>/dev/null || true
+
+tar -czf "$CACHED_BB_TAR" -C "$BB_STAGE" .
+cp -a "$BB_STAGE/." "$ROOTFS_DIR/"
 log "BusyBox installed to $ROOTFS_DIR ($(du -h "$ROOTFS_DIR/bin/busybox" | cut -f1))"

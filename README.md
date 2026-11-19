@@ -1,5 +1,7 @@
 # Mini-Linux 128 MB RAM (Zero-Initramfs + WireGuard + VLESS REALITY Ready)
 
+[![Build Mini-Linux 128MB](https://github.com/zieru/micro-net-linux/actions/workflows/build-mini-linux.yml/badge.svg)](https://github.com/zieru/micro-net-linux/actions/workflows/build-mini-linux.yml)
+
 Distribusi Linux x86_64 ultra-minimalis berbasis **Linux Kernel 6.6 LTS (`tinyconfig`)**, **BusyBox statis (`musl`)**, dan **Dropbear SSH statis (`musl`)** tanpa `initramfs`, dirancang agar menyisakan **>115 MB RAM bebas** pada VPS/VM berkapasitas **128 MB RAM**.
 
 ## Rincian Pemakaian RAM (Target 128 MB)
@@ -28,8 +30,8 @@ Distribusi Linux x86_64 ultra-minimalis berbasis **Linux Kernel 6.6 LTS (`tinyco
 ## Cara Build Image
 
 ### Opsi 1: Otomatis via GitHub Actions (Tanpa WSL/Docker di Windows)
-1. Push repositori ini ke GitHub.
-2. Workflow [build-mini-linux.yml](.github/workflows/build-mini-linux.yml) otomatis berjalan dan menghasilkan artifact `mini-linux-128mb-x86_64` berisi:
+1. Push repositori ini ke GitHub atau jalankan manual lewat tab [Actions](https://github.com/zieru/micro-net-linux/actions).
+2. Workflow [build-mini-linux.yml](.github/workflows/build-mini-linux.yml) otomatis berjalan dengan **Multi-Layer Build Cache** (`bzImage`, `busybox`, `dropbearmulti`, `wg`, plus `ccache` — rebuild setelah ubah `rootfs/` hanya ~30 detik; gunakan opsi `force_rebuild` saat `workflow_dispatch` jika ingin kompilasi bersih). Hasil build diunggah sebagai artifact `mini-linux-128mb-x86_64` berisi:
    - `mini-linux.iso` (untuk test di VirtualBox & upload Custom ISO ke VPS)
    - `mini-linux.img` (raw disk image 64 MB)
    - `mini-linux.vdi` (disk image siap pakai VirtualBox)

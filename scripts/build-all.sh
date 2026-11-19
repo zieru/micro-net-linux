@@ -22,6 +22,9 @@ for cmd in "${REQUIRED_CMDS[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || die "Required command '$cmd' is not installed."
 done
 
+rm -rf "$ROOTFS_DIR"
+mkdir -p "$ROOTFS_DIR"
+
 "$ROOT_DIR/scripts/01-build-kernel.sh"
 "$ROOT_DIR/scripts/02-build-busybox.sh"
 "$ROOT_DIR/scripts/03-build-dropbear.sh"

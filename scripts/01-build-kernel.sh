@@ -2,6 +2,13 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
+CACHED_BZIMAGE="$CACHE_DIR/kernel/bzImage"
+if [ "$FORCE_REBUILD" != "1" ] && [ -s "$CACHED_BZIMAGE" ]; then
+    cp "$CACHED_BZIMAGE" "$OUT_DIR/bzImage"
+    log "Using cached kernel bzImage ($(du -h "$OUT_DIR/bzImage" | cut -f1))"
+    exit 0
+fi
+
 KERNEL_MAJOR="${LINUX_VERSION%%.*}"
 KERNEL_TARBALL="$DL_DIR/linux-${LINUX_VERSION}.tar.xz"
 KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${LINUX_VERSION}.tar.xz"
@@ -56,8 +63,15 @@ if grep -q "^CONFIG_BLK_DEV_INITRD=y$" .config; then
     die "CONFIG_BLK_DEV_INITRD must remain disabled for zero-initramfs build!"
 fi
 
+KERNEL_CC="gcc"
+if command -v ccache >/dev/null 2>&1; then
+    KERNEL_CC="ccache gcc"
+    log "ccache enabled for kernel compilation (CCACHE_DIR=${CCACHE_DIR:-default})"
+fi
+
 log "Compiling Linux bzImage using ${JOBS} threads..."
-make -j"$JOBS" ARCH=x86_64 bzImage
+make -j"$JOBS" ARCH=x86_64 CC="$KERNEL_CC" bzImage
 
 cp arch/x86/boot/bzImage "$OUT_DIR/bzImage"
+cp arch/x86/boot/bzImage "$CACHED_BZIMAGE"
 log "Kernel ready: $OUT_DIR/bzImage ($(du -h "$OUT_DIR/bzImage" | cut -f1))"

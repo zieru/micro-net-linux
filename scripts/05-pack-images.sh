@@ -7,7 +7,9 @@ find_syslinux_file() {
     for dir in \
         /usr/lib/ISOLINUX \
         /usr/lib/syslinux/modules/bios \
+        /usr/lib/syslinux/mbr \
         /usr/lib/syslinux/bios \
+        /usr/lib/syslinux \
         /usr/share/syslinux \
         /usr/lib/EXTLINUX; do
         if [ -f "$dir/$name" ]; then

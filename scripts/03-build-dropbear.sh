@@ -2,6 +2,25 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
+install_dropbear_bin() {
+    local src_bin="$1"
+    mkdir -p "$ROOTFS_DIR/usr/sbin" "$ROOTFS_DIR/usr/bin"
+    install -m 0755 "$src_bin" "$ROOTFS_DIR/usr/sbin/dropbearmulti"
+
+    ln -sf dropbearmulti "$ROOTFS_DIR/usr/sbin/dropbear"
+    ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/dbclient"
+    ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/ssh"
+    ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/dropbearkey"
+    ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/scp"
+}
+
+CACHED_DB="$CACHE_DIR/dropbear/dropbearmulti"
+if [ "$FORCE_REBUILD" != "1" ] && [ -s "$CACHED_DB" ]; then
+    install_dropbear_bin "$CACHED_DB"
+    log "Using cached Dropbear ($(du -h "$ROOTFS_DIR/usr/sbin/dropbearmulti" | cut -f1))"
+    exit 0
+fi
+
 setup_musl_headers
 
 DB_TARBALL="$DL_DIR/dropbear-${DROPBEAR_VERSION}.tar.bz2"
@@ -34,14 +53,8 @@ log "Configuring Dropbear ${DROPBEAR_VERSION} (static musl)..."
 log "Compiling Dropbear multi-binary..."
 make -j"$JOBS" PROGRAMS="dropbear dbclient dropbearkey scp" MULTI=1 STATIC=1
 
-mkdir -p "$ROOTFS_DIR/usr/sbin" "$ROOTFS_DIR/usr/bin"
-install -m 0755 dropbearmulti "$ROOTFS_DIR/usr/sbin/dropbearmulti"
-strip --strip-all "$ROOTFS_DIR/usr/sbin/dropbearmulti" 2>/dev/null || true
-
-ln -sf dropbearmulti "$ROOTFS_DIR/usr/sbin/dropbear"
-ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/dbclient"
-ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/ssh"
-ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/dropbearkey"
-ln -sf ../sbin/dropbearmulti "$ROOTFS_DIR/usr/bin/scp"
+strip --strip-all dropbearmulti 2>/dev/null || true
+install -m 0755 dropbearmulti "$CACHED_DB"
+install_dropbear_bin "$CACHED_DB"
 
 log "Dropbear installed ($(du -h "$ROOTFS_DIR/usr/sbin/dropbearmulti" | cut -f1))"
