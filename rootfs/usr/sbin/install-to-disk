@@ -141,7 +141,7 @@ if [ -f "$MNT/boot/extlinux/extlinux.conf" ]; then
 fi
 
 # Migrate active runtime customizations before interactive overrides
-for item in etc/x-ui-agent etc/tinyssh etc/wireguard etc/network.conf etc/shadow etc/passwd etc/hostname root/.ssh; do
+for item in etc/x-ui-agent etc/tinyssh etc/wireguard etc/firewall.conf etc/network.conf etc/shadow etc/passwd etc/hostname root/.ssh; do
     if [ -e "/$item" ]; then
         mkdir -p "$MNT/$(dirname "$item")"
         cp -a "/$item" "$MNT/$(dirname "$item")/"

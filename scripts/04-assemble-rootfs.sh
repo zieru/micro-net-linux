@@ -87,6 +87,7 @@ cp "$OUT_DIR/bzImage" "$ROOTFS_DIR/boot/bzImage"
 [ -x "$ROOTFS_DIR/sbin/e2fsck" ] || die "Missing executable /sbin/e2fsck in $ROOTFS_DIR"
 [ -x "$ROOTFS_DIR/usr/bin/htop" ] || die "Missing executable /usr/bin/htop in $ROOTFS_DIR"
 [ -x "$ROOTFS_DIR/usr/sbin/tinysshd" ] || die "Missing executable /usr/sbin/tinysshd in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/usr/sbin/nft" ] || die "Missing executable /usr/sbin/nft in $ROOTFS_DIR"
 [ -s "$ROOTFS_DIR/etc/ssl/certs/ca-certificates.crt" ] || die "Missing CA certificate bundle in $ROOTFS_DIR"
 [ -s "$ROOTFS_DIR/boot/bzImage" ] || die "Missing /boot/bzImage in $ROOTFS_DIR"
 

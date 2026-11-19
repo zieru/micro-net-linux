@@ -121,6 +121,17 @@ else
     warn "netui tidak ditemukan"
 fi
 
+# 11. Kernel nftables Firewall (Auto-Ban & Allowlist)
+if [ -x /usr/sbin/nft ]; then
+    if /usr/sbin/nft list table inet minilinux_fw >/dev/null 2>&1; then
+        ok "Firewall nftables aktif (inet minilinux_fw)"
+    else
+        warn "nft terpasang namun tabel minilinux_fw belum aktif"
+    fi
+else
+    fail "Biner /usr/sbin/nft tidak ditemukan"
+fi
+
 echo ""
 echo "Ringkasan: PASS=$PASS | WARN=$WARN | FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
