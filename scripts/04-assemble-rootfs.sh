@@ -33,6 +33,7 @@ chmod 0755 "$ROOTFS_DIR/usr/sbin/save-config"
 chmod 0755 "$ROOTFS_DIR/usr/sbin/install-to-disk"
 chmod 0755 "$ROOTFS_DIR/usr/sbin/check-readiness"
 chmod 0755 "$ROOTFS_DIR/usr/sbin/netui"
+chmod 0755 "$ROOTFS_DIR/usr/sbin/add-ssh-key"
 
 # Account files (/etc/passwd, /etc/group, /etc/shadow)
 ROOT_PASSWORD="${ROOT_PASSWORD:-minilinux}"

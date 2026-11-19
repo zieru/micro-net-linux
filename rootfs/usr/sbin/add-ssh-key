@@ -1,0 +1,235 @@
+#!/bin/sh
+# /usr/sbin/add-ssh-key — One-time Web Drop for TinySSH authorized_keys
+# Opens a temporary BusyBox httpd + PIN-protected page so users on VNC
+# without clipboard paste can submit their ssh-ed25519 public key via browser.
+
+set -eu
+
+TARGET="/root/.ssh/authorized_keys"
+PORT="8080"
+TIMEOUT="300"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --target)
+            TARGET="${2:?--target requires a path}"
+            shift 2
+            ;;
+        --port)
+            PORT="${2:?--port requires a port}"
+            shift 2
+            ;;
+        --timeout)
+            TIMEOUT="${2:?--timeout requires seconds}"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: add-ssh-key [--target PATH] [--port PORT] [--timeout SEC]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Generate random 6-digit PIN
+RAND_NUM="$(od -An -N3 -tu4 /dev/urandom | tr -d ' ')"
+PIN=$(( (RAND_NUM % 900000) + 100000 ))
+
+TMPDIR="$(mktemp -d /tmp/webdrop.XXXXXX)"
+HTTPD_PID=""
+
+cleanup() {
+    if [ -n "$HTTPD_PID" ]; then
+        kill "$HTTPD_PID" 2>/dev/null || true
+    fi
+    if command -v nft >/dev/null 2>&1 && nft list table inet minilinux_fw >/dev/null 2>&1; then
+        nft -a list chain inet minilinux_fw input 2>/dev/null | \
+            awk '/comment "webdrop"/ {print $NF}' | \
+            while read -r h; do
+                [ -n "$h" ] && nft delete rule inet minilinux_fw input handle "$h" 2>/dev/null || true
+            done
+    fi
+    rm -rf "$TMPDIR"
+}
+trap cleanup EXIT INT TERM
+
+mkdir -p "$TMPDIR/cgi-bin"
+
+cat > "$TMPDIR/index.html" << 'EOF'
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini-Linux SSH Key Web Drop</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px;display:flex;justify-content:center}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;max-width:540px;width:100%;box-shadow:0 10px 25px rgba(0,0,0,.35)}
+h1{font-size:1.25rem;margin:0 0 8px;color:#38bdf8}
+p{font-size:.9rem;color:#94a3b8;margin:0 0 18px}
+label{display:block;font-size:.85rem;font-weight:600;margin:12px 0 6px}
+input,textarea{width:100%;box-sizing:border-box;background:#0f172a;color:#f8fafc;border:1px solid #475569;border-radius:8px;padding:10px;font-family:monospace;font-size:.9rem}
+textarea{min-height:110px;resize:vertical}
+button{margin-top:16px;width:100%;background:#0284c7;color:#fff;border:none;border-radius:8px;padding:12px;font-size:1rem;font-weight:600;cursor:pointer}
+button:hover{background:#0369a1}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Mini-Linux SSH Key Web Drop</h1>
+<p>Masukkan PIN yang tampil di konsol VPS dan tempel SSH public key (<code>ssh-ed25519 ...</code>) Anda.</p>
+<form method="POST" action="/cgi-bin/save">
+<label for="pin">PIN (6 digit)</label>
+<input id="pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus placeholder="123456">
+<label for="key">SSH Public Key (Ed25519)</label>
+<textarea id="key" name="key" required placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."></textarea>
+<button type="submit">Simpan SSH Key</button>
+</form>
+</div>
+</body>
+</html>
+EOF
+
+cat > "$TMPDIR/cgi-bin/save" << EOF
+#!/bin/sh
+PIN_EXPECTED="$PIN"
+TARGET_FILE="$TARGET"
+STATE_DIR="$TMPDIR"
+
+send_html() {
+    status="\$1"
+    title="\$2"
+    msg="\$3"
+    printf "Status: %s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" "\$status"
+    printf "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>%s</title>" "\$title"
+    printf "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;justify-content:center;padding:32px}.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;max-width:480px;width:100%%}a{color:#38bdf8}</style>"
+    printf "</head><body><div class='card'><h2>%s</h2><p>%s</p></div></body></html>" "\$title" "\$msg"
+}
+
+if [ "\${REQUEST_METHOD:-}" != "POST" ]; then
+    send_html "405 Method Not Allowed" "Method Not Allowed" "Gunakan form di <a href='/'>halaman utama</a>."
+    exit 0
+fi
+
+LEN="\${CONTENT_LENGTH:-0}"
+case "\$LEN" in
+    ''|*[!0-9]*) LEN=0 ;;
+esac
+if [ "\$LEN" -le 0 ] || [ "\$LEN" -gt 8192 ]; then
+    send_html "400 Bad Request" "Request Tidak Valid" "Ukuran data tidak valid. <a href='/'>Kembali</a>."
+    exit 0
+fi
+
+BODY="\$(dd bs=1 count="\$LEN" 2>/dev/null)"
+RAW_PIN=""
+RAW_KEY=""
+
+OLD_IFS="\$IFS"
+IFS='&'
+for pair in \$BODY; do
+    k="\${pair%%=*}"
+    v="\${pair#*=}"
+    v_plus="\$(printf '%s' "\$v" | tr '+' ' ')"
+    v_dec="\$(httpd -d "\$v_plus" 2>/dev/null || printf '%s' "\$v_plus")"
+    case "\$k" in
+        pin) RAW_PIN="\$v_dec" ;;
+        key) RAW_KEY="\$v_dec" ;;
+    esac
+done
+IFS="\$OLD_IFS"
+
+IN_PIN="\$(printf '%s' "\$RAW_PIN" | tr -d ' \r\n\t')"
+if [ "\$IN_PIN" != "\$PIN_EXPECTED" ]; then
+    FAIL_COUNT=1
+    if [ -f "\$STATE_DIR/fails" ]; then
+        FAIL_COUNT=\$(( \$(cat "\$STATE_DIR/fails") + 1 ))
+    fi
+    echo "\$FAIL_COUNT" > "\$STATE_DIR/fails"
+    if [ "\$FAIL_COUNT" -ge 5 ]; then
+        send_html "403 Forbidden" "Diblokir" "Terlalu banyak percobaan PIN salah. Sesi Web Drop ditutup."
+        touch "\$STATE_DIR/aborted"
+        exit 0
+    fi
+    send_html "403 Forbidden" "PIN Salah" "PIN tidak cocok. <a href='/'>Coba lagi</a>."
+    exit 0
+fi
+
+CLEAN_KEY="\$(printf '%s' "\$RAW_KEY" | tr '\r' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -E '^(ssh-ed25519|ecdsa-sha2-nistp256|sk-ssh-ed25519@openssh\.com)[[:space:]]+[A-Za-z0-9+/=]+' | head -n 1 || true)"
+if [ -z "\$CLEAN_KEY" ]; then
+    send_html "400 Bad Request" "Format Key Tidak Valid" "TinySSH hanya mendukung key modern (<code>ssh-ed25519</code> atau <code>ecdsa-sha2-nistp256</code>). Pastikan Anda menyalin isi file <code>id_ed25519.pub</code>. <a href='/'>Coba lagi</a>."
+    exit 0
+fi
+
+TARGET_DIR="\$(dirname "\$TARGET_FILE")"
+mkdir -p "\$TARGET_DIR"
+chmod 0700 "\$TARGET_DIR"
+printf '%s\n' "\$CLEAN_KEY" >> "\$TARGET_FILE"
+chmod 0600 "\$TARGET_FILE"
+
+send_html "200 OK" "Berhasil!" "SSH public key berhasil disimpan ke <code>\$TARGET_FILE</code>. Server Web Drop otomatis ditutup, Anda sekarang bisa konek via SSH."
+touch "\$STATE_DIR/done"
+EOF
+
+chmod 0755 "$TMPDIR/cgi-bin/save"
+
+# Open temporary firewall port if nftables is active
+if command -v nft >/dev/null 2>&1 && nft list table inet minilinux_fw >/dev/null 2>&1; then
+    nft insert rule inet minilinux_fw input tcp dport "$PORT" accept comment \"webdrop\" 2>/dev/null || \
+        nft add rule inet minilinux_fw input tcp dport "$PORT" accept comment \"webdrop\" 2>/dev/null || true
+fi
+
+# Start BusyBox httpd in foreground mode as background process
+httpd -f -p "$PORT" -h "$TMPDIR" >/dev/null 2>&1 &
+HTTPD_PID="$!"
+
+echo ""
+echo "================================================================"
+echo "  TinySSH Web Drop Aktif (sementara, maks ${TIMEOUT} detik)"
+echo "================================================================"
+IP4_LIST="$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 || true)"
+IP6_LIST="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {print $2}' | cut -d/ -f1 || true)"
+
+if [ -n "$IP4_LIST" ]; then
+    for ip4 in $IP4_LIST; do
+        echo "  Buka di browser : http://${ip4}:${PORT}"
+    done
+fi
+if [ -n "$IP6_LIST" ]; then
+    for ip6 in $IP6_LIST; do
+        echo "  Buka di browser : http://[${ip6}]:${PORT}"
+    done
+fi
+if [ -z "$IP4_LIST" ] && [ -z "$IP6_LIST" ]; then
+    echo "  Buka di browser : http://<IP_VPS>:${PORT}"
+fi
+
+echo "  PIN             : ${PIN}"
+echo "  Target          : ${TARGET}"
+echo "================================================================"
+echo "Menunggu submit dari browser... (Tekan Ctrl+C untuk batal)"
+
+ELAPSED=0
+while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+    if [ -f "$TMPDIR/done" ]; then
+        sleep 1
+        echo "[webdrop] SSH public key berhasil disimpan ke $TARGET!"
+        exit 0
+    fi
+    if [ -f "$TMPDIR/aborted" ]; then
+        sleep 1
+        echo "[webdrop] Dibatalkan karena terlalu banyak percobaan PIN salah." >&2
+        exit 1
+    fi
+    if ! kill -0 "$HTTPD_PID" 2>/dev/null; then
+        echo "[webdrop] Server httpd berhenti tak terduga." >&2
+        exit 1
+    fi
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+done
+
+echo "[webdrop] Waktu habis (${TIMEOUT}s), tidak ada key yang dikirim." >&2
+exit 1
