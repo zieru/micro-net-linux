@@ -9,8 +9,10 @@ install_terminfo_minimal() {
         for base in "$CACHE_DIR/htop/terminfo" /lib/terminfo /usr/share/terminfo; do
             if [ -f "$base/$entry" ]; then
                 cp -f "$base/$entry" "$ti_dest/$entry"
-                mkdir -p "$CACHE_DIR/htop/terminfo/$(dirname "$entry")"
-                cp -f "$base/$entry" "$CACHE_DIR/htop/terminfo/$entry"
+                if [ "$base" != "$CACHE_DIR/htop/terminfo" ]; then
+                    mkdir -p "$CACHE_DIR/htop/terminfo/$(dirname "$entry")"
+                    cp -f "$base/$entry" "$CACHE_DIR/htop/terminfo/$entry"
+                fi
                 break
             fi
         done
