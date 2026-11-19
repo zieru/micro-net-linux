@@ -31,13 +31,8 @@ fi
 
 cd "$TS_SRC"
 log "Compiling TinySSH ${TINYSSH_VERSION} (static musl)..."
-echo "musl-gcc $MUSL_INC_FLAGS -Os -ffunction-sections -fdata-sections -Wall" > conf-cc 2>/dev/null || true
-echo "musl-gcc -static -no-pie -Wl,--gc-sections" > conf-ld 2>/dev/null || true
-
-make -j"$JOBS" \
-    CC="musl-gcc $MUSL_INC_FLAGS" \
-    CFLAGS="-Os -ffunction-sections -fdata-sections" \
-    LDFLAGS="-static -no-pie -Wl,--gc-sections"
+make \
+    CC="musl-gcc $MUSL_INC_FLAGS -Os -ffunction-sections -fdata-sections -static -no-pie -Wl,--gc-sections"
 
 TINY_BIN="$(find . -type f -name tinysshd -perm -111 | head -n 1)"
 MAKEKEY_BIN="$(find . -type f -name tinysshd-makekey -perm -111 | head -n 1)"
