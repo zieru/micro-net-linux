@@ -39,6 +39,7 @@ cp "$ROOT_DIR/configs/dropbear-localoptions.h" localoptions.h
 
 log "Configuring Dropbear ${DROPBEAR_VERSION} (static musl)..."
 ./configure \
+    --disable-harden \
     --disable-zlib \
     --disable-pam \
     --disable-lastlog \
