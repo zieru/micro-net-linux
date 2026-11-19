@@ -83,7 +83,7 @@ PKG_CONFIG_PATH="$NFT_PREFIX/lib/pkgconfig" \
     LDFLAGS="-static -no-pie -Wl,--gc-sections -L$NFT_PREFIX/lib"
 
 log "Compiling nft (static musl)..."
-make -j"$JOBS"
+make -j"$JOBS" LDFLAGS="-all-static -no-pie -Wl,--gc-sections -L$NFT_PREFIX/lib"
 
 NFT_BIN="$NFT_SRC/src/nft"
 [ -f "$NFT_BIN" ] || die "nft binary not found after make"
