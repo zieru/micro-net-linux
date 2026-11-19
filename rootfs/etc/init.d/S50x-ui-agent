@@ -6,26 +6,34 @@ NAME="x-ui-agent-rs"
 DAEMON="/usr/local/bin/x-ui-agent-rs"
 PIDFILE="/run/x-ui-agent.pid"
 LOGFILE="/var/log/x-ui-agent.log"
-STATE_DIR="/etc/x-ui-agent"
+CONF_FILE="/etc/x-ui-agent/agent.conf"
+
 LISTEN=":2053"
+STATE_DIR="/etc/x-ui-agent"
+BASE_PATH="/"
 TLS_CERT="/etc/x-ui-agent/cert.pem"
 TLS_KEY="/etc/x-ui-agent/key.pem"
+SHELL_ALLOW_IP=""
 
+[ -f "$CONF_FILE" ] && . "$CONF_FILE"
 [ -x "$DAEMON" ] || exit 0
 
 start() {
     printf "[agent] Starting %s... " "$NAME"
     mkdir -p "$STATE_DIR"
     chmod 0700 "$STATE_DIR"
-    TLS_ARGS=""
-    if [ -f "$TLS_CERT" ] && [ -f "$TLS_KEY" ]; then
-        TLS_ARGS="-tls-cert $TLS_CERT -tls-key $TLS_KEY"
-    fi
+
+    EXTRA_ARGS=""
+    [ -n "$BASE_PATH" ] && EXTRA_ARGS="$EXTRA_ARGS -base-path $BASE_PATH"
+    [ -n "$TLS_CERT" ] && EXTRA_ARGS="$EXTRA_ARGS -tls-cert $TLS_CERT"
+    [ -n "$TLS_KEY" ] && EXTRA_ARGS="$EXTRA_ARGS -tls-key $TLS_KEY"
+    [ -n "$SHELL_ALLOW_IP" ] && EXTRA_ARGS="$EXTRA_ARGS -shell-allow-ip $SHELL_ALLOW_IP"
+
     start-stop-daemon -S -b -m -p "$PIDFILE" \
         -x "$DAEMON" -- \
         -listen "$LISTEN" \
         -state-dir "$STATE_DIR" \
-        $TLS_ARGS >> "$LOGFILE" 2>&1
+        $EXTRA_ARGS >> "$LOGFILE" 2>&1
     echo "OK"
 }
 
