@@ -112,6 +112,13 @@ jobs:
           path: build/cache/e2fsprogs
           key: mini-linux-e2fsprogs-v1-${{ hashFiles('scripts/03c-build-e2fsprogs.sh', 'scripts/common.sh') }}
 
+      - name: Restore htop cache
+        id: cache-htop
+        uses: actions/cache/restore@v4
+        with:
+          path: build/cache/htop
+          key: mini-linux-htop-v1-${{ hashFiles('scripts/03d-build-htop.sh', 'scripts/common.sh') }}
+
       - name: Prepare clean rootfs and script permissions
         run: |
           chmod +x scripts/*.sh
@@ -174,6 +181,16 @@ jobs:
         with:
           path: build/cache/e2fsprogs
           key: ${{ steps.cache-e2fsprogs.outputs.cache-primary-key }}
+
+      - name: Build htop (static musl + ncurses)
+        run: bash scripts/03d-build-htop.sh
+
+      - name: Save htop cache
+        if: steps.cache-htop.outputs.cache-hit != 'true' && hashFiles('build/cache/htop/htop') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/htop
+          key: ${{ steps.cache-htop.outputs.cache-primary-key }}
 
       - name: Save upstream source tarballs cache
         if: always() && steps.cache-dl.outputs.cache-hit != 'true' && hashFiles('build/dl/*') != ''
