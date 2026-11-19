@@ -93,6 +93,17 @@ else
     fail "/dev/urandom tidak tersedia"
 fi
 
+# 9. x-ui-agent-rs (Embedded Shoes + Hardened Remote Shell)
+if [ -x /usr/local/bin/x-ui-agent-rs ]; then
+    if pidof x-ui-agent-rs >/dev/null 2>&1; then
+        ok "x-ui-agent-rs aktif (embedded shoes + remote shell)"
+    else
+        warn "x-ui-agent-rs terpasang namun belum berjalan"
+    fi
+else
+    fail "Biner /usr/local/bin/x-ui-agent-rs tidak ditemukan"
+fi
+
 echo ""
 echo "Ringkasan: PASS=$PASS | WARN=$WARN | FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

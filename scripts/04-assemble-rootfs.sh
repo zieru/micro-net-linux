@@ -13,13 +13,13 @@ mkdir -p \
     "$ROOTFS_DIR/var" \
     "$ROOTFS_DIR/mnt" \
     "$ROOTFS_DIR/boot" \
-    "$ROOTFS_DIR/root/.ssh" \
-    "$ROOTFS_DIR/etc/dropbear" \
+    "$ROOTFS_DIR/root" \
+    "$ROOTFS_DIR/etc/x-ui-agent" \
     "$ROOTFS_DIR/etc/wireguard" \
     "$ROOTFS_DIR/etc/ssl/certs" \
     "$ROOTFS_DIR/usr/local/bin"
 
-chmod 0700 "$ROOTFS_DIR/root" "$ROOTFS_DIR/root/.ssh" "$ROOTFS_DIR/etc/dropbear" "$ROOTFS_DIR/etc/wireguard"
+chmod 0700 "$ROOTFS_DIR/root" "$ROOTFS_DIR/etc/x-ui-agent" "$ROOTFS_DIR/etc/wireguard"
 chmod 1777 "$ROOTFS_DIR/tmp"
 
 # Copy repository rootfs templates & scripts
@@ -79,8 +79,10 @@ cp "$OUT_DIR/bzImage" "$ROOTFS_DIR/boot/bzImage"
 # Final rootfs integrity sanity checks
 [ -e "$ROOTFS_DIR/sbin/init" ] || die "Missing /sbin/init in $ROOTFS_DIR"
 [ -x "$ROOTFS_DIR/bin/busybox" ] || die "Missing executable /bin/busybox in $ROOTFS_DIR"
-[ -x "$ROOTFS_DIR/usr/sbin/dropbearmulti" ] || die "Missing executable /usr/sbin/dropbearmulti in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/usr/local/bin/x-ui-agent-rs" ] || die "Missing executable /usr/local/bin/x-ui-agent-rs in $ROOTFS_DIR"
 [ -x "$ROOTFS_DIR/usr/bin/wg" ] || die "Missing executable /usr/bin/wg in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/sbin/resize2fs" ] || die "Missing executable /sbin/resize2fs in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/sbin/e2fsck" ] || die "Missing executable /sbin/e2fsck in $ROOTFS_DIR"
 [ -s "$ROOTFS_DIR/etc/ssl/certs/ca-certificates.crt" ] || die "Missing CA certificate bundle in $ROOTFS_DIR"
 [ -s "$ROOTFS_DIR/boot/bzImage" ] || die "Missing /boot/bzImage in $ROOTFS_DIR"
 

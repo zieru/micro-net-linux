@@ -4,35 +4,74 @@ set -eu
 IMG_GZ="/boot/mini-linux.img.gz"
 
 usage() {
-    echo "Usage: install-to-disk <block-device> [--yes]"
+    echo "Usage: install-to-disk [<block-device>] [--yes] [--swap <MB>]"
     echo "Contoh:"
+    echo "  install-to-disk             # Mode interaktif penuh"
     echo "  install-to-disk /dev/vda    # Cloud VPS (KVM / VirtIO)"
     echo "  install-to-disk /dev/sda    # VirtualBox / SATA / IDE"
     exit 1
 }
 
 [ "$(id -u)" -eq 0 ] || { echo "ERROR: Harus dijalankan sebagai root."; exit 1; }
-[ $# -ge 1 ] || usage
+[ -f "$IMG_GZ" ] || { echo "ERROR: $IMG_GZ tidak ditemukan. Pastikan Anda booting dari Live ISO."; exit 1; }
 
-TARGET="$1"
-AUTO_YES="${2:-}"
+TARGET=""
+AUTO_YES=0
+SWAP_OPT=""
 
-if [ ! -f "$IMG_GZ" ]; then
-    echo "ERROR: $IMG_GZ tidak ditemukan. Pastikan Anda booting dari Live ISO."
-    exit 1
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --yes|-y) AUTO_YES=1 ;;
+        --swap)
+            shift
+            [ $# -gt 0 ] || usage
+            SWAP_OPT="$1"
+            ;;
+        --help|-h) usage ;;
+        /dev/*)
+            TARGET="$1"
+            ;;
+        *)
+            usage
+            ;;
+    esac
+    shift
+done
+
+detect_disks() {
+    for d in /sys/block/vd* /sys/block/sd* /sys/block/nvme*; do
+        [ -e "$d" ] || continue
+        name="$(basename "$d")"
+        sz_sectors="$(cat "$d/size" 2>/dev/null || echo 0)"
+        sz_mb=$((sz_sectors / 2048))
+        echo "  /dev/$name (${sz_mb} MB)"
+    done
+}
+
+if [ -z "$TARGET" ]; then
+    echo "=== Mini-Linux 128MB Disk Installer (ext4) ==="
+    echo "Disk yang terdeteksi:"
+    detect_disks
+    echo ""
+    printf "Masukkan target disk (contoh: /dev/vda atau /dev/sda): "
+    read -r TARGET
 fi
 
 if [ ! -b "$TARGET" ]; then
     echo "ERROR: $TARGET bukan block device yang valid."
-    echo "Disk yang terdeteksi:"
-    ls /dev/sd* /dev/vd* 2>/dev/null || true
+    detect_disks
     exit 1
 fi
 
 case "$TARGET" in
     *[0-9])
-        echo "ERROR: Gunakan device disk utama (misal /dev/vda atau /dev/sda), bukan partisi ($TARGET)."
-        exit 1
+        case "$TARGET" in
+            *nvme*n[0-9]) ;;
+            *)
+                echo "ERROR: Gunakan device disk utama (misal /dev/vda atau /dev/sda), bukan partisi ($TARGET)."
+                exit 1
+                ;;
+        esac
         ;;
 esac
 
@@ -41,8 +80,9 @@ if grep -q "^${TARGET}" /proc/mounts; then
     exit 1
 fi
 
-if [ "$AUTO_YES" != "--yes" ]; then
-    echo "PERINGATAN: Seluruh data pada $TARGET akan DIHAPUS dan diganti dengan Mini-Linux."
+if [ "$AUTO_YES" -ne 1 ]; then
+    echo ""
+    echo "PERINGATAN: Seluruh data pada $TARGET akan DIHAPUS dan diganti dengan Mini-Linux (ext4)."
     printf "Lanjutkan instalasi ke %s? [y/N]: " "$TARGET"
     read -r ans
     case "$ans" in
@@ -51,11 +91,12 @@ if [ "$AUTO_YES" != "--yes" ]; then
     esac
 fi
 
-echo "[1/4] Menulis image sistem (zero-initramfs) ke $TARGET..."
+echo ""
+echo "[1/6] Menulis image sistem ext4 (zero-initramfs) ke $TARGET..."
 gzip -dc "$IMG_GZ" | dd of="$TARGET" bs=1M conv=fsync 2>/dev/null || gzip -dc "$IMG_GZ" | dd of="$TARGET" bs=1M
 sync
 
-echo "[2/4] Membaca ulang tabel partisi $TARGET..."
+echo "[2/6] Memperluas partisi ext4 ke seluruh kapasitas $TARGET..."
 if command -v blockdev >/dev/null 2>&1; then
     blockdev --rereadpt "$TARGET" 2>/dev/null || true
 fi
@@ -65,20 +106,30 @@ case "$TARGET" in
     *nvme*|*mmcblk*) PART="${TARGET}p1" ;;
     *) PART="${TARGET}1" ;;
 esac
-if [ ! -b "$PART" ]; then
-    printf "w\n" | fdisk "$TARGET" >/dev/null 2>&1 || true
-    sleep 1
+
+# Expand partition 1 from sector 2048 to end of disk while preserving EXTLINUX MBR
+printf "d\nn\np\n1\n2048\n\na\nw\n" | fdisk "$TARGET" >/dev/null 2>&1 || true
+if command -v blockdev >/dev/null 2>&1; then
+    blockdev --rereadpt "$TARGET" 2>/dev/null || true
 fi
+sleep 1
 
 if [ ! -b "$PART" ]; then
     echo "ERROR: Partisi $PART tidak muncul setelah penulisan disk."
     exit 1
 fi
 
-echo "[3/4] Menyesuaikan bootloader EXTLINUX & menyalin konfigurasi..."
+if command -v e2fsck >/dev/null 2>&1; then
+    e2fsck -fy "$PART" >/dev/null 2>&1 || true
+fi
+if command -v resize2fs >/dev/null 2>&1; then
+    resize2fs "$PART" >/dev/null 2>&1 || true
+fi
+
+echo "[3/6] Memasang partisi ext4 & bootloader EXTLINUX..."
 MNT="/tmp/mnt-install"
 mkdir -p "$MNT"
-mount "$PART" "$MNT"
+mount -t ext4 "$PART" "$MNT" 2>/dev/null || mount "$PART" "$MNT"
 
 BOOT_LABEL="sda"
 case "$TARGET" in
@@ -89,22 +140,193 @@ if [ -f "$MNT/boot/extlinux/extlinux.conf" ]; then
     sed -i "s/^DEFAULT .*/DEFAULT $BOOT_LABEL/" "$MNT/boot/extlinux/extlinux.conf"
 fi
 
-# Migrate active runtime customizations (SSH host key, authorized_keys, WireGuard, network, password)
-for item in etc/dropbear etc/wireguard etc/network.conf etc/shadow etc/passwd etc/hostname root/.ssh; do
+# Migrate active runtime customizations before interactive overrides
+for item in etc/x-ui-agent etc/wireguard etc/network.conf etc/shadow etc/passwd etc/hostname; do
     if [ -e "/$item" ]; then
         mkdir -p "$MNT/$(dirname "$item")"
         cp -a "/$item" "$MNT/$(dirname "$item")/"
     fi
 done
 
+# --- Step 4: Flexible Swap Configuration ---
+echo ""
+echo "[4/6] Konfigurasi Swap (RAM Virtual)"
+SWAP_MB=256
+if [ -n "$SWAP_OPT" ]; then
+    SWAP_MB="$SWAP_OPT"
+elif [ "$AUTO_YES" -ne 1 ]; then
+    AVAIL_MB="$(df -m "$MNT" 2>/dev/null | awk 'NR==2 {print $4}')"
+    echo "Ruang disk tersedia pada $PART: ${AVAIL_MB:-?} MB"
+    echo "Pilih ukuran swapfile:"
+    echo "  1) Tidak pakai swap (0 MB)"
+    echo "  2) 128 MB"
+    echo "  3) 256 MB (Disarankan untuk VPS 128 MB RAM)"
+    echo "  4) 512 MB"
+    echo "  5) Custom (masukkan ukuran dalam MB)"
+    printf "Pilihan [1-5, default 3]: "
+    read -r sw_choice
+    case "$sw_choice" in
+        1) SWAP_MB=0 ;;
+        2) SWAP_MB=128 ;;
+        ""|3) SWAP_MB=256 ;;
+        4) SWAP_MB=512 ;;
+        5)
+            printf "Masukkan ukuran swap dalam MB (contoh 1024): "
+            read -r SWAP_MB
+            ;;
+        *) SWAP_MB=256 ;;
+    esac
+fi
+
+case "$SWAP_MB" in
+    ''|*[!0-9]*)
+        echo "Ukuran swap tidak valid ('$SWAP_MB'), menggunakan 256 MB."
+        SWAP_MB=256
+        ;;
+esac
+
+if [ "$SWAP_MB" -gt 0 ]; then
+    AVAIL_MB="$(df -m "$MNT" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [ -n "$AVAIL_MB" ] && [ "$SWAP_MB" -ge "$AVAIL_MB" ]; then
+        echo "PERINGATAN: Ruang disk tidak cukup (${AVAIL_MB} MB tersedia) untuk swap ${SWAP_MB} MB. Swap dilewati."
+        SWAP_MB=0
+    else
+        echo "Membuat /swapfile (${SWAP_MB} MB)..."
+        dd if=/dev/zero of="$MNT/swapfile" bs=1M count="$SWAP_MB" 2>/dev/null
+        chmod 0600 "$MNT/swapfile"
+        mkswap "$MNT/swapfile" >/dev/null
+        if [ -f "$MNT/etc/fstab" ]; then
+            sed -i '\|/swapfile|d' "$MNT/etc/fstab"
+        fi
+        echo "/swapfile none swap sw 0 0" >> "$MNT/etc/fstab"
+        echo "Swap ${SWAP_MB} MB berhasil dibuat dan ditambahkan ke /etc/fstab."
+    fi
+else
+    rm -f "$MNT/swapfile"
+    if [ -f "$MNT/etc/fstab" ]; then
+        sed -i '\|/swapfile|d' "$MNT/etc/fstab"
+    fi
+    echo "Swap dinonaktifkan (0 MB)."
+fi
+
+# --- Step 5: Interactive Network Configuration Dialog ---
+echo ""
+echo "[5/6] Konfigurasi Jaringan"
+NET_MODE_DESC="DHCP"
+if [ "$AUTO_YES" -ne 1 ]; then
+    echo "Pilih mode jaringan:"
+    echo "  1) DHCP (otomatis, default)"
+    echo "  2) Static IP"
+    if [ -f "$MNT/etc/network.conf" ]; then
+        echo "  3) Pertahankan konfigurasi saat ini"
+    fi
+    printf "Pilihan [1-3, default 1]: "
+    read -r net_choice
+    case "$net_choice" in
+        2)
+            DEF_IFACE="eth0"
+            for dev in /sys/class/net/*; do
+                n="$(basename "$dev")"
+                case "$n" in
+                    lo|wg*|tun*|tap*|sit*|ip6tnl*) continue ;;
+                    *) DEF_IFACE="$n"; break ;;
+                esac
+            done
+            printf "Interface jaringan [%s]: " "$DEF_IFACE"
+            read -r IN_IFACE
+            [ -n "$IN_IFACE" ] || IN_IFACE="$DEF_IFACE"
+
+            IN_IP=""
+            while [ -z "$IN_IP" ]; do
+                printf "IPv4 Address/CIDR (contoh 192.168.1.10/24): "
+                read -r IN_IP
+            done
+
+            printf "Gateway IPv4 (contoh 192.168.1.1, kosongkan jika tidak ada): "
+            read -r IN_GW
+
+            printf "DNS Server (pisahkan spasi, default '1.1.1.1 8.8.8.8'): "
+            read -r IN_DNS
+            [ -n "$IN_DNS" ] || IN_DNS="1.1.1.1 8.8.8.8"
+
+            cat > "$MNT/etc/network.conf" << EOF
+MODE="static"
+IFACE="$IN_IFACE"
+STATIC_IP="$IN_IP"
+GATEWAY="$IN_GW"
+DNS="$IN_DNS"
+EOF
+            chmod 0644 "$MNT/etc/network.conf"
+            NET_MODE_DESC="Static ($IN_IP via $IN_IFACE)"
+            ;;
+        3)
+            if [ -f "$MNT/etc/network.conf" ]; then
+                NET_MODE_DESC="Existing /etc/network.conf"
+            else
+                echo 'MODE="dhcp"' > "$MNT/etc/network.conf"
+            fi
+            ;;
+        *)
+            echo 'MODE="dhcp"' > "$MNT/etc/network.conf"
+            chmod 0644 "$MNT/etc/network.conf"
+            NET_MODE_DESC="DHCP"
+            ;;
+    esac
+fi
+
+# --- Step 6: Interactive Root Password ---
+echo ""
+echo "[6/6] Konfigurasi Password Root"
+PW_STATUS="Dipertahankan"
+if [ "$AUTO_YES" -ne 1 ]; then
+    read_secret() {
+        if command -v stty >/dev/null 2>&1; then
+            stty -echo 2>/dev/null || true
+            read -r "$1"
+            stty echo 2>/dev/null || true
+            echo ""
+        else
+            read -r "$1"
+        fi
+    }
+
+    while true; do
+        printf "Masukkan password root baru (kosongkan untuk tidak mengubah): "
+        read_secret PW1
+        if [ -z "$PW1" ]; then
+            break
+        fi
+        printf "Ulangi password root baru: "
+        read_secret PW2
+        if [ "$PW1" = "$PW2" ]; then
+            if command -v chpasswd >/dev/null 2>&1; then
+                printf "root:%s\n" "$PW1" | chroot "$MNT" /bin/sh -c "chpasswd"
+            else
+                printf "%s\n%s\n" "$PW1" "$PW1" | chroot "$MNT" /bin/sh -c "passwd root" >/dev/null 2>&1
+            fi
+            PW_STATUS="Diperbarui"
+            echo "Password root berhasil diperbarui."
+            break
+        else
+            echo "Password tidak cocok, silakan ulangi."
+        fi
+    done
+fi
+
 sync
 umount "$MNT"
 rmdir "$MNT" 2>/dev/null || true
 
-echo "[4/4] Selesai!"
 echo ""
-echo "Instalasi ke $TARGET berhasil (Boot target default: $BOOT_LABEL)."
+echo "=============================================================="
+echo " Instalasi ke $TARGET selesai!"
+echo "   Partisi Root : $PART (ext4)"
+echo "   Boot Target  : $BOOT_LABEL"
+echo "   Swap         : ${SWAP_MB} MB"
+echo "   Jaringan     : $NET_MODE_DESC"
+echo "   Password Root: $PW_STATUS"
+echo "   Agent State  : /etc/x-ui-agent (Dropbear dihapus)"
+echo "=============================================================="
 echo "Langkah berikutnya:"
 echo "  1. Matikan/eject Custom ISO dari panel VPS atau VirtualBox."
 echo "  2. Jalankan perintah: reboot"
-echo "Sistem akan booting langsung dari $PART tanpa ISO dan tanpa initramfs."

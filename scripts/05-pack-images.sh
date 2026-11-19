@@ -58,7 +58,7 @@ for _ in 1 2 3 4 5; do
 done
 [ -b "$PART_DEV" ] || die "Partition $PART_DEV did not appear"
 
-sudo mke2fs -t ext2 -L MINILINUX -m 1 -q "$PART_DEV"
+sudo mke2fs -t ext4 -O ^64bit,^metadata_csum -L MINILINUX -m 1 -q "$PART_DEV"
 
 mkdir -p "$IMG_MNT"
 sudo mount "$PART_DEV" "$IMG_MNT"

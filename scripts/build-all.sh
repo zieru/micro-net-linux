@@ -16,6 +16,8 @@ REQUIRED_CMDS=(
     curl
     tar
     gzip
+    cargo
+    git
 )
 
 for cmd in "${REQUIRED_CMDS[@]}"; do
@@ -27,8 +29,9 @@ mkdir -p "$ROOTFS_DIR"
 
 "$ROOT_DIR/scripts/01-build-kernel.sh"
 "$ROOT_DIR/scripts/02-build-busybox.sh"
-"$ROOT_DIR/scripts/03-build-dropbear.sh"
+"$ROOT_DIR/scripts/03-build-x-ui-agent.sh"
 "$ROOT_DIR/scripts/03b-build-wireguard.sh"
+"$ROOT_DIR/scripts/03c-build-e2fsprogs.sh"
 "$ROOT_DIR/scripts/04-assemble-rootfs.sh"
 "$ROOT_DIR/scripts/05-pack-images.sh"
 

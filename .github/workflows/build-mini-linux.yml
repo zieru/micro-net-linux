@@ -56,12 +56,17 @@ jobs:
             xz-utils \
             bzip2
 
+      - name: Install Rust toolchain (musl)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
       - name: Restore upstream source tarballs cache
         id: cache-dl
         uses: actions/cache/restore@v4
         with:
           path: build/dl
-          key: mini-linux-sources-v1-${{ hashFiles('scripts/common.sh') }}
+          key: mini-linux-sources-v2-${{ hashFiles('scripts/common.sh') }}
 
       - name: Restore compiled kernel cache
         id: cache-kernel
@@ -84,14 +89,14 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/cache/busybox
-          key: mini-linux-busybox-v1-${{ hashFiles('configs/busybox-mini.fragment', 'scripts/02-build-busybox.sh', 'scripts/common.sh') }}
+          key: mini-linux-busybox-v2-${{ hashFiles('configs/busybox-mini.fragment', 'scripts/02-build-busybox.sh', 'scripts/common.sh') }}
 
-      - name: Restore Dropbear cache
-        id: cache-dropbear
+      - name: Restore x-ui-agent-rs cache
+        id: cache-agent
         uses: actions/cache/restore@v4
         with:
-          path: build/cache/dropbear
-          key: mini-linux-dropbear-v1-${{ hashFiles('configs/dropbear-localoptions.h', 'scripts/03-build-dropbear.sh', 'scripts/common.sh') }}
+          path: build/cache/x-ui-agent
+          key: mini-linux-agent-v1-${{ hashFiles('scripts/03-build-x-ui-agent.sh', 'scripts/common.sh') }}
 
       - name: Restore WireGuard CLI cache
         id: cache-wireguard
@@ -99,6 +104,13 @@ jobs:
         with:
           path: build/cache/wireguard
           key: mini-linux-wireguard-v1-${{ hashFiles('scripts/03b-build-wireguard.sh', 'scripts/common.sh') }}
+
+      - name: Restore e2fsprogs cache
+        id: cache-e2fsprogs
+        uses: actions/cache/restore@v4
+        with:
+          path: build/cache/e2fsprogs
+          key: mini-linux-e2fsprogs-v1-${{ hashFiles('scripts/03c-build-e2fsprogs.sh', 'scripts/common.sh') }}
 
       - name: Prepare clean rootfs and script permissions
         run: |
@@ -133,15 +145,15 @@ jobs:
           path: build/cache/busybox
           key: ${{ steps.cache-busybox.outputs.cache-primary-key }}
 
-      - name: Build Dropbear SSH (static musl)
-        run: bash scripts/03-build-dropbear.sh
+      - name: Build x-ui-agent-rs (static musl, embedded shoes)
+        run: bash scripts/03-build-x-ui-agent.sh
 
-      - name: Save Dropbear cache
-        if: steps.cache-dropbear.outputs.cache-hit != 'true' && hashFiles('build/cache/dropbear/dropbearmulti') != ''
+      - name: Save x-ui-agent-rs cache
+        if: steps.cache-agent.outputs.cache-hit != 'true' && hashFiles('build/cache/x-ui-agent/x-ui-agent-rs') != ''
         uses: actions/cache/save@v4
         with:
-          path: build/cache/dropbear
-          key: ${{ steps.cache-dropbear.outputs.cache-primary-key }}
+          path: build/cache/x-ui-agent
+          key: ${{ steps.cache-agent.outputs.cache-primary-key }}
 
       - name: Build WireGuard CLI (static musl)
         run: bash scripts/03b-build-wireguard.sh
@@ -152,6 +164,16 @@ jobs:
         with:
           path: build/cache/wireguard
           key: ${{ steps.cache-wireguard.outputs.cache-primary-key }}
+
+      - name: Build e2fsprogs resize2fs & e2fsck (static musl)
+        run: bash scripts/03c-build-e2fsprogs.sh
+
+      - name: Save e2fsprogs cache
+        if: steps.cache-e2fsprogs.outputs.cache-hit != 'true' && hashFiles('build/cache/e2fsprogs/resize2fs') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/e2fsprogs
+          key: ${{ steps.cache-e2fsprogs.outputs.cache-primary-key }}
 
       - name: Save upstream source tarballs cache
         if: always() && steps.cache-dl.outputs.cache-hit != 'true' && hashFiles('build/dl/*') != ''
