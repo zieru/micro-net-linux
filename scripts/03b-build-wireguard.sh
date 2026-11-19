@@ -29,7 +29,7 @@ make clean >/dev/null 2>&1 || true
 
 # Pass CFLAGS/LDFLAGS via environment so Makefile's `CFLAGS +=` flags remain active
 CFLAGS="-Os -ffunction-sections -fdata-sections" \
-LDFLAGS="-static -Wl,--gc-sections" \
+LDFLAGS="-static -no-pie -Wl,--gc-sections" \
 make -j"$JOBS" \
     CC="musl-gcc $MUSL_INC_FLAGS" \
     WITH_BASHCOMPLETION=no \
@@ -38,6 +38,7 @@ make -j"$JOBS" \
     wg
 
 strip --strip-all wg 2>/dev/null || true
+assert_static_elf wg
 install -m 0755 wg "$CACHED_WG"
 
 mkdir -p "$ROOTFS_DIR/usr/bin"

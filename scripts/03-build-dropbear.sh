@@ -48,12 +48,13 @@ log "Configuring Dropbear ${DROPBEAR_VERSION} (static musl)..."
     --disable-wtmpx \
     CC="musl-gcc $MUSL_INC_FLAGS" \
     CFLAGS="-Os -ffunction-sections -fdata-sections" \
-    LDFLAGS="-static -Wl,--gc-sections"
+    LDFLAGS="-static -no-pie -Wl,--gc-sections"
 
 log "Compiling Dropbear multi-binary..."
 make -j"$JOBS" PROGRAMS="dropbear dbclient dropbearkey scp" MULTI=1 STATIC=1
 
 strip --strip-all dropbearmulti 2>/dev/null || true
+assert_static_elf dropbearmulti
 install -m 0755 dropbearmulti "$CACHED_DB"
 install_dropbear_bin "$CACHED_DB"
 

@@ -76,4 +76,12 @@ ln -sf certs/ca-certificates.crt "$ROOTFS_DIR/etc/ssl/cert.pem"
 [ -s "$OUT_DIR/bzImage" ] || die "Missing $OUT_DIR/bzImage. Run 01-build-kernel.sh first."
 cp "$OUT_DIR/bzImage" "$ROOTFS_DIR/boot/bzImage"
 
+# Final rootfs integrity sanity checks
+[ -e "$ROOTFS_DIR/sbin/init" ] || die "Missing /sbin/init in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/bin/busybox" ] || die "Missing executable /bin/busybox in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/usr/sbin/dropbearmulti" ] || die "Missing executable /usr/sbin/dropbearmulti in $ROOTFS_DIR"
+[ -x "$ROOTFS_DIR/usr/bin/wg" ] || die "Missing executable /usr/bin/wg in $ROOTFS_DIR"
+[ -s "$ROOTFS_DIR/etc/ssl/certs/ca-certificates.crt" ] || die "Missing CA certificate bundle in $ROOTFS_DIR"
+[ -s "$ROOTFS_DIR/boot/bzImage" ] || die "Missing /boot/bzImage in $ROOTFS_DIR"
+
 log "Rootfs assembled successfully ($(du -sh "$ROOTFS_DIR" | cut -f1))"

@@ -45,7 +45,7 @@ log "Creating 64 MB zero-initramfs disk image: $IMG_PATH..."
 rm -f "$IMG_PATH" "$VDI_PATH"
 truncate -s 64M "$IMG_PATH"
 
-printf 'label: dos\n2048,,83,*\n' | sfdisk "$IMG_PATH" >/dev/null
+printf 'label: dos\nstart=2048, type=83, bootable\n' | sfdisk "$IMG_PATH" >/dev/null
 
 LOOP_DEV="$(sudo losetup -fP --show "$IMG_PATH")"
 [ -n "$LOOP_DEV" ] || die "Failed to attach loop device"
@@ -161,7 +161,7 @@ sudo xorriso -as mkisofs \
     -no-emul-boot \
     -boot-load-size 4 \
     -boot-info-table \
-    "${XORRISO_HYBRID_ARGS[@]}" \
+    "${XORRISO_HYBRID_ARGS[@]+"${XORRISO_HYBRID_ARGS[@]}"}" \
     "$ISO_ROOT"
 sudo chown "$(id -u):$(id -g)" "$ISO_PATH"
 sudo rm -rf "$ISO_ROOT"

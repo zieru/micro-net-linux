@@ -57,7 +57,7 @@ setup_musl_headers() {
     local inc="$BUILD_DIR/musl-inc"
     mkdir -p "$inc"
 
-    for dir in linux asm-generic; do
+    for dir in linux asm-generic mtd scsi sound video misc; do
         if [ -d "/usr/include/$dir" ]; then
             ln -sfn "/usr/include/$dir" "$inc/$dir"
         fi
@@ -70,4 +70,14 @@ setup_musl_headers() {
     fi
 
     export MUSL_INC_FLAGS="-isystem $inc"
+}
+
+assert_static_elf() {
+    local bin="$1"
+    [ -f "$bin" ] || die "Expected binary not found: $bin"
+    if command -v readelf >/dev/null 2>&1; then
+        if readelf -l "$bin" 2>/dev/null | grep -q "INTERP"; then
+            die "Binary $bin is dynamically linked (expected static ELF)!"
+        fi
+    fi
 }

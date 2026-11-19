@@ -18,6 +18,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      ROOT_PASSWORD: ${{ inputs.root_password || 'minilinux' }}
+      FORCE_REBUILD: ${{ inputs.force_rebuild == true && '1' || '0' }}
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
+      CCACHE_MAXSIZE: 500M
 
     steps:
       - name: Checkout repository
@@ -34,6 +39,7 @@ jobs:
             flex \
             libelf-dev \
             libssl-dev \
+            musl-dev \
             musl-tools \
             linux-libc-dev \
             syslinux \
@@ -44,58 +50,120 @@ jobs:
             e2fsprogs \
             fdisk \
             qemu-utils \
+            binutils \
             ca-certificates \
             curl \
             xz-utils \
             bzip2
 
-      - name: Cache upstream source tarballs
-        uses: actions/cache@v4
+      - name: Restore upstream source tarballs cache
+        id: cache-dl
+        uses: actions/cache/restore@v4
         with:
           path: build/dl
           key: mini-linux-sources-v1-${{ hashFiles('scripts/common.sh') }}
 
-      - name: Cache compiled kernel (bzImage)
-        uses: actions/cache@v4
+      - name: Restore compiled kernel cache
+        id: cache-kernel
+        uses: actions/cache/restore@v4
         with:
           path: build/cache/kernel
           key: mini-linux-kernel-v1-${{ hashFiles('configs/kernel-mini-x86_64.config', 'scripts/01-build-kernel.sh', 'scripts/common.sh') }}
 
-      - name: Cache kernel compiler objects (ccache)
-        uses: actions/cache@v4
+      - name: Restore kernel ccache
+        id: cache-ccache
+        uses: actions/cache/restore@v4
         with:
           path: build/cache/ccache
           key: mini-linux-ccache-v1-${{ hashFiles('configs/kernel-mini-x86_64.config', 'scripts/common.sh') }}
           restore-keys: |
             mini-linux-ccache-v1-
 
-      - name: Cache compiled BusyBox rootfs
-        uses: actions/cache@v4
+      - name: Restore BusyBox cache
+        id: cache-busybox
+        uses: actions/cache/restore@v4
         with:
           path: build/cache/busybox
           key: mini-linux-busybox-v1-${{ hashFiles('configs/busybox-mini.fragment', 'scripts/02-build-busybox.sh', 'scripts/common.sh') }}
 
-      - name: Cache compiled Dropbear SSH
-        uses: actions/cache@v4
+      - name: Restore Dropbear cache
+        id: cache-dropbear
+        uses: actions/cache/restore@v4
         with:
           path: build/cache/dropbear
           key: mini-linux-dropbear-v1-${{ hashFiles('configs/dropbear-localoptions.h', 'scripts/03-build-dropbear.sh', 'scripts/common.sh') }}
 
-      - name: Cache compiled WireGuard CLI (wg)
-        uses: actions/cache@v4
+      - name: Restore WireGuard CLI cache
+        id: cache-wireguard
+        uses: actions/cache/restore@v4
         with:
           path: build/cache/wireguard
           key: mini-linux-wireguard-v1-${{ hashFiles('scripts/03b-build-wireguard.sh', 'scripts/common.sh') }}
 
-      - name: Build Mini-Linux (Kernel + BusyBox + Dropbear + WireGuard + Images)
-        env:
-          ROOT_PASSWORD: ${{ inputs.root_password || 'minilinux' }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild == true && '1' || '0' }}
-          CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
-          CCACHE_MAXSIZE: 500M
+      - name: Prepare clean rootfs and script permissions
         run: |
           chmod +x scripts/*.sh
-          bash scripts/build-all.sh
+          rm -rf build/rootfs
+          mkdir -p build/rootfs
+
+      - name: Build Linux Kernel (tinyconfig)
+        run: bash scripts/01-build-kernel.sh
+
+      - name: Save kernel cache
+        if: steps.cache-kernel.outputs.cache-hit != 'true' && hashFiles('build/cache/kernel/bzImage') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/kernel
+          key: ${{ steps.cache-kernel.outputs.cache-primary-key }}
+
+      - name: Save kernel ccache
+        if: steps.cache-ccache.outputs.cache-hit != 'true' && steps.cache-kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/ccache
+          key: ${{ steps.cache-ccache.outputs.cache-primary-key }}
+
+      - name: Build BusyBox (static musl)
+        run: bash scripts/02-build-busybox.sh
+
+      - name: Save BusyBox cache
+        if: steps.cache-busybox.outputs.cache-hit != 'true' && hashFiles('build/cache/busybox/busybox-rootfs.tar.gz') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/busybox
+          key: ${{ steps.cache-busybox.outputs.cache-primary-key }}
+
+      - name: Build Dropbear SSH (static musl)
+        run: bash scripts/03-build-dropbear.sh
+
+      - name: Save Dropbear cache
+        if: steps.cache-dropbear.outputs.cache-hit != 'true' && hashFiles('build/cache/dropbear/dropbearmulti') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/dropbear
+          key: ${{ steps.cache-dropbear.outputs.cache-primary-key }}
+
+      - name: Build WireGuard CLI (static musl)
+        run: bash scripts/03b-build-wireguard.sh
+
+      - name: Save WireGuard cache
+        if: steps.cache-wireguard.outputs.cache-hit != 'true' && hashFiles('build/cache/wireguard/wg') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache/wireguard
+          key: ${{ steps.cache-wireguard.outputs.cache-primary-key }}
+
+      - name: Save upstream source tarballs cache
+        if: always() && steps.cache-dl.outputs.cache-hit != 'true' && hashFiles('build/dl/*') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: build/dl
+          key: ${{ steps.cache-dl.outputs.cache-primary-key }}
+
+      - name: Assemble RootFS & Pack Images (.img / .vdi / .iso)
+        run: |
+          bash scripts/04-assemble-rootfs.sh
+          bash scripts/05-pack-images.sh
 
       - name: Generate SHA256SUMS
         run: |

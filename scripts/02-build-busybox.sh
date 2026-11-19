@@ -50,7 +50,7 @@ BB_MAKE_ARGS=(
     HOSTCC=gcc
     CC="musl-gcc $MUSL_INC_FLAGS"
     EXTRA_CFLAGS="-Os -ffunction-sections -fdata-sections"
-    LDFLAGS="-static -Wl,--gc-sections"
+    EXTRA_LDFLAGS="-static -no-pie -Wl,--gc-sections"
 )
 make -j"$JOBS" "${BB_MAKE_ARGS[@]}"
 
@@ -59,6 +59,7 @@ rm -rf "$BB_STAGE"
 mkdir -p "$BB_STAGE"
 make "${BB_MAKE_ARGS[@]}" CONFIG_PREFIX="$BB_STAGE" install
 strip --strip-all "$BB_STAGE/bin/busybox" 2>/dev/null || true
+assert_static_elf "$BB_STAGE/bin/busybox"
 
 tar -czf "$CACHED_BB_TAR" -C "$BB_STAGE" .
 cp -a "$BB_STAGE/." "$ROOTFS_DIR/"
