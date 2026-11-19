@@ -59,6 +59,7 @@ if [ ! -f "$NC_PREFIX/lib/libncurses.a" ]; then
         --without-progs \
         --without-tests \
         --disable-db-install \
+        --disable-widec \
         --without-gpm \
         --without-dlsym \
         --enable-overwrite \
