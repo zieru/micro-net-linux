@@ -124,7 +124,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/cache/x-ui-agent
-          key: mini-linux-agent-v1-${{ hashFiles('scripts/03-build-x-ui-agent.sh', 'scripts/common.sh') }}
+          key: mini-linux-agent-v2-${{ hashFiles('scripts/03-build-x-ui-agent.sh', 'scripts/common.sh') }}
 
       - name: Restore WireGuard CLI cache
         id: cache-wireguard

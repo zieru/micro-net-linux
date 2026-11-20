@@ -129,16 +129,18 @@ RAW_KEY=""
 
 OLD_IFS="\$IFS"
 IFS='&'
+set -f
 for pair in \$BODY; do
     k="\${pair%%=*}"
     v="\${pair#*=}"
     v_plus="\$(printf '%s' "\$v" | tr '+' ' ')"
-    v_dec="\$(httpd -d "\$v_plus" 2>/dev/null || printf '%s' "\$v_plus")"
+    v_dec="\$(httpd -d -- "\$v_plus" 2>/dev/null || printf '%s' "\$v_plus")"
     case "\$k" in
         pin) RAW_PIN="\$v_dec" ;;
         key) RAW_KEY="\$v_dec" ;;
     esac
 done
+set +f
 IFS="\$OLD_IFS"
 
 IN_PIN="\$(printf '%s' "\$RAW_PIN" | tr -d ' \r\n\t')"
@@ -175,10 +177,22 @@ EOF
 
 chmod 0755 "$TMPDIR/cgi-bin/save"
 
-# Open temporary firewall port if nftables is active
+# Open temporary firewall port if nftables is active (respect TRUSTED_IPS if configured)
 if command -v nft >/dev/null 2>&1 && nft list table inet minilinux_fw >/dev/null 2>&1; then
-    nft insert rule inet minilinux_fw input tcp dport "$PORT" accept comment \"webdrop\" 2>/dev/null || \
+    FW_TRUSTED_IPS=""
+    if [ -f /etc/firewall.conf ]; then
+        FW_TRUSTED_IPS="$(awk -F= '/^[[:space:]]*TRUSTED_IPS=/{gsub(/["'\'']/, "", $2); print $2; exit}' /etc/firewall.conf 2>/dev/null || true)"
+    fi
+    if [ -n "$FW_TRUSTED_IPS" ]; then
+        for tip in $FW_TRUSTED_IPS; do
+            case "$tip" in
+                *:*) nft add rule inet minilinux_fw input ip6 saddr "$tip" tcp dport "$PORT" accept comment \"webdrop\" 2>/dev/null || true ;;
+                *)   nft add rule inet minilinux_fw input ip saddr "$tip" tcp dport "$PORT" accept comment \"webdrop\" 2>/dev/null || true ;;
+            esac
+        done
+    else
         nft add rule inet minilinux_fw input tcp dport "$PORT" accept comment \"webdrop\" 2>/dev/null || true
+    fi
 fi
 
 # Start BusyBox httpd in foreground mode as background process

@@ -20,11 +20,11 @@ mkdir -p \
     "$ROOTFS_DIR/etc/ssl/certs" \
     "$ROOTFS_DIR/usr/local/bin"
 
-chmod 0700 "$ROOTFS_DIR/root" "$ROOTFS_DIR/root/.ssh" "$ROOTFS_DIR/etc/x-ui-agent" "$ROOTFS_DIR/etc/tinyssh" "$ROOTFS_DIR/etc/wireguard"
-chmod 1777 "$ROOTFS_DIR/tmp"
-
 # Copy repository rootfs templates & scripts
 cp -a "$ROOT_DIR/rootfs/." "$ROOTFS_DIR/"
+
+chmod 0700 "$ROOTFS_DIR/root" "$ROOTFS_DIR/root/.ssh" "$ROOTFS_DIR/etc/x-ui-agent" "$ROOTFS_DIR/etc/tinyssh" "$ROOTFS_DIR/etc/wireguard"
+chmod 1777 "$ROOTFS_DIR/tmp"
 
 # Ensure permissions on scripts
 chmod 0755 "$ROOTFS_DIR/etc/init.d/"*
