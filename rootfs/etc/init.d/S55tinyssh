@@ -28,6 +28,11 @@ start() {
     start-stop-daemon -S -b -m -p "$PIDFILE" \
         -x /bin/busybox -- tcpsvd -E "$TINYSSH_LISTEN" "$TINYSSH_PORT" \
         "$DAEMON" -l "$TINYSSH_KEYDIR" >/var/log/tinyssh.log 2>&1
+    sleep 1
+    if [ -f "$PIDFILE" ]; then
+        TINY_PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+        [ -n "$TINY_PID" ] && echo -900 > "/proc/$TINY_PID/oom_score_adj" 2>/dev/null || true
+    fi
 }
 
 stop() {

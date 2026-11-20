@@ -1,10 +1,13 @@
 #!/bin/sh
 # BusyBox /etc/init.d/S50x-ui-agent for zieru/micro-net-linux
 # POSIX sh only (no bash, no OpenRC/systemd).
+# Includes lightweight auto-respawn supervisor for OOM/crash recovery.
 
 NAME="x-ui-agent-rs"
 DAEMON="/usr/local/bin/x-ui-agent-rs"
 PIDFILE="/run/x-ui-agent.pid"
+SUP_PIDFILE="/run/x-ui-agent-sup.pid"
+STOP_FLAG="/run/x-ui-agent.stop"
 LOGFILE="/var/log/x-ui-agent.log"
 CONF_FILE="/etc/x-ui-agent/agent.conf"
 
@@ -18,32 +21,58 @@ SHELL_ALLOW_IP=""
 [ -f "$CONF_FILE" ] && . "$CONF_FILE"
 [ -x "$DAEMON" ] || exit 0
 
+run_supervisor() {
+    echo "$$" > "$SUP_PIDFILE"
+    while [ ! -f "$STOP_FLAG" ]; do
+        "$DAEMON" \
+            -listen "$LISTEN" \
+            -state-dir "$STATE_DIR" \
+            ${BASE_PATH:+-base-path "$BASE_PATH"} \
+            ${TLS_CERT:+-tls-cert "$TLS_CERT"} \
+            ${TLS_KEY:+-tls-key "$TLS_KEY"} \
+            ${SHELL_ALLOW_IP:+-shell-allow-ip "$SHELL_ALLOW_IP"} \
+            >> "$LOGFILE" 2>&1 &
+        CHILD_PID="$!"
+        echo "$CHILD_PID" > "$PIDFILE"
+        wait "$CHILD_PID" 2>/dev/null || true
+        rm -f "$PIDFILE"
+        [ -f "$STOP_FLAG" ] && break
+        echo "[agent] $(date '+%Y-%m-%d %H:%M:%S') x-ui-agent-rs exited; respawning in 2s..." >> "$LOGFILE"
+        sleep 2
+    done
+    rm -f "$SUP_PIDFILE" "$PIDFILE"
+}
+
+if [ "${1:-}" = "__supervise" ]; then
+    run_supervisor
+    exit 0
+fi
+
 start() {
-    printf "[agent] Starting %s... " "$NAME"
+    if [ -f "$SUP_PIDFILE" ] && kill -0 "$(cat "$SUP_PIDFILE" 2>/dev/null)" 2>/dev/null; then
+        echo "[agent] $NAME supervisor already running."
+        return 0
+    fi
+    printf "[agent] Starting %s (auto-respawn)... " "$NAME"
     mkdir -p "$STATE_DIR"
     chmod 0700 "$STATE_DIR"
-
-    EXTRA_ARGS=""
-    [ -n "$BASE_PATH" ] && EXTRA_ARGS="$EXTRA_ARGS -base-path $BASE_PATH"
-    [ -n "$TLS_CERT" ] && EXTRA_ARGS="$EXTRA_ARGS -tls-cert $TLS_CERT"
-    [ -n "$TLS_KEY" ] && EXTRA_ARGS="$EXTRA_ARGS -tls-key $TLS_KEY"
-    [ -n "$SHELL_ALLOW_IP" ] && EXTRA_ARGS="$EXTRA_ARGS -shell-allow-ip $SHELL_ALLOW_IP"
-
-    start-stop-daemon -S -b -m -p "$PIDFILE" \
-        -x "$DAEMON" -- \
-        -listen "$LISTEN" \
-        -state-dir "$STATE_DIR" \
-        $EXTRA_ARGS >> "$LOGFILE" 2>&1
+    rm -f "$STOP_FLAG"
+    nohup "$0" __supervise >/dev/null 2>&1 &
     echo "OK"
 }
 
 stop() {
     printf "[agent] Stopping %s... " "$NAME"
+    touch "$STOP_FLAG"
     if [ -f "$PIDFILE" ]; then
-        start-stop-daemon -K -p "$PIDFILE" -s TERM
+        kill -TERM "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null || true
         rm -f "$PIDFILE"
     else
         killall "$NAME" 2>/dev/null || true
+    fi
+    if [ -f "$SUP_PIDFILE" ]; then
+        kill -TERM "$(cat "$SUP_PIDFILE" 2>/dev/null)" 2>/dev/null || true
+        rm -f "$SUP_PIDFILE"
     fi
     echo "OK"
 }
