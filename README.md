@@ -1,48 +1,49 @@
-# Mini-Linux 128 MB RAM (Zero-Initramfs + WireGuard + VLESS REALITY Ready)
+# Mini-Linux 128 MB RAM (Zero-Initramfs + `x-ui-agent-rs` + TinySSH + `nftables`)
 
 [![Build Mini-Linux 128MB](https://github.com/zieru/micro-net-linux/actions/workflows/build-mini-linux.yml/badge.svg)](https://github.com/zieru/micro-net-linux/actions/workflows/build-mini-linux.yml)
 
-Distribusi Linux x86_64 ultra-minimalis berbasis **Linux Kernel 6.6 LTS (`tinyconfig`)**, **BusyBox statis (`musl`)**, dan **Dropbear SSH statis (`musl`)** tanpa `initramfs`, dirancang agar menyisakan **>115 MB RAM bebas** pada VPS/VM berkapasitas **128 MB RAM**.
-
-## Rincian Pemakaian RAM (Target 128 MB)
-
-| Komponen | Estimasi RAM | Keterangan |
-| :--- | :--- | :--- |
-| **Linux Kernel 6.6 (`tinyconfig`)** | ~4.2 – 6.0 MB | `SLUB_TINY`, `NR_CPUS=4`, tanpa `initramfs`, tanpa loadable modules. |
-| **Userland (BusyBox + Dropbear SSH)** | ~1.5 – 2.0 MB | Static `musl-libc`, `Ed25519` + `ChaCha20-Poly1305`, batas `tmpfs` ketat. |
-| **WireGuard `wg` + CA Bundle + `ntpd`** | ~0.0 – 0.4 MB | Kernel-native `wireguard` + `wg` statis (~80 KB di disk). |
-| **Sisa RAM Bebas (OS Idle)** | **~118 – 122 MB** | Siap untuk `xray-core` (VLESS REALITY) + TCP socket buffer BBR. |
-
-## Fitur Utama
-
-- **Dual-Mode Zero Initramfs (`.img`, `.vdi`, dan Custom `.iso`)**:
-  - **`mini-linux.iso`**: Boot langsung me-mount `ISO9660 + Rock Ridge` (`root=/dev/sr0`) **tanpa initramfs**, memakai overlay RAM tipis untuk `/etc` & `/root`.
-  - **`install-to-disk /dev/vda`** (atau `/dev/sda`): Menginstal OS ke hard disk VPS/VM sebagai partisi `ext2` murni + `EXTLINUX`, sehingga Custom ISO dapat dilepas permanen.
-- **Kompatibel VirtualBox & Cloud VPS (KVM/QEMU)**: Driver *built-in* untuk `VirtIO-Blk/SCSI`, `VirtIO-Net`, `ATA PIIX`, `SATA AHCI`, dan `Intel E1000`.
-- **Dukungan WireGuard Native**: `CONFIG_WIREGUARD=y` + biner statis `/usr/bin/wg` + skrip service POSIX `/etc/init.d/S40wireguard` (tanpa perlu `bash`).
-- **Prasyarat Lengkap VLESS REALITY & Go Runtime**:
-  - Syscall Go & GC: `CONFIG_ADVISE_SYSCALLS=y`, `FUTEX`, `EPOLL`, `EVENTFD`, `TIMERFD`, `SIGNALFD`, `INOTIFY_USER`.
-  - Jaringan & Firewall: `TCP BBR` + `FQ` (default), `TUN/TAP`, `nftables` + `iptables` (`TPROXY`, `SOCKET`, `MASQUERADE`, `IP_MULTIPLE_TABLES`).
-  - Jam & TLS: `RTC_DRV_CMOS` + `ntpd` (sync waktu akurat untuk validasi timestamp REALITY), `HW_RANDOM_VIRTIO`, akselerasi CPU `AES-NI`/`ChaCha20`/`Curve25519`, dan `/etc/ssl/certs/ca-certificates.crt`.
+Distribusi Linux `x86_64` ultra-minimalis berbasis **Linux Kernel 6.6 LTS (`tinyconfig`)**, **BusyBox statis (`musl`)**, **TinySSH (`musl`, public-key only)**, dan **`x-ui-agent-rs` (Rust static `musl` dengan embedded `shoes` proxy)** tanpa `initramfs`, dirancang untuk VPS/VM **128 MB RAM** dengan output khusus **ISO-only (`mini-linux-v0.1.x.iso`)**.
 
 ---
 
-## Cara Build Image
+## Fitur Utama
 
-### Opsi 1: Otomatis via GitHub Actions (Tanpa WSL/Docker di Windows)
-1. Push repositori ini ke GitHub atau jalankan manual lewat tab [Actions](https://github.com/zieru/micro-net-linux/actions).
-2. Workflow [build-mini-linux.yml](.github/workflows/build-mini-linux.yml) otomatis berjalan dengan **Multi-Layer Build Cache** (`bzImage`, `busybox`, `dropbearmulti`, `wg`, plus `ccache` — rebuild setelah ubah `rootfs/` hanya ~30 detik; gunakan opsi `force_rebuild` saat `workflow_dispatch` jika ingin kompilasi bersih). Hasil build diunggah sebagai artifact `mini-linux-128mb-x86_64` berisi:
-   - `mini-linux.iso` (untuk test di VirtualBox & upload Custom ISO ke VPS)
-   - `mini-linux.img` (raw disk image 64 MB)
-   - `mini-linux.vdi` (disk image siap pakai VirtualBox)
-   - `bzImage` & `SHA256SUMS.txt`
+- **Zero-Initramfs + `ext4` Full-Disk Installer (`install-to-disk`)**:
+  - **Live ISO (`ISO9660`)**: Boot langsung tanpa `initramfs` dengan overlay RAM tipis untuk `/etc` & `/root`.
+  - **Disk Install (`ext4`)**: `install-to-disk /dev/vda` (atau `/dev/sda`) mempartisi ulang seluruh disk menjadi `ext4` + `EXTLINUX` (`e2fsck`/`resize2fs`), membuat `/swapfile` fleksibel (0–512 MB+), dialog jaringan dual-stack, password root **SHA-512**, dan setup SSH key via **Web Drop**.
+- **`x-ui-agent-rs` (Embedded `shoes` Proxy + Hardened Remote Shell)**:
+  - Menggantikan Go `xray-core` dengan single-binary Rust (`12 MB` statis `musl`, single-threaded Tokio runtime).
+  - Auto-generate sertifikat **TLS 1.3 (ECDSA P-256)** pada boot pertama (`:2053` selalu HTTPS), mendukung *cert pinning*, *hot-reload* TLS/token, otentikasi shell **Ed25519 + anti-replay**, dan *rate-limiting* Bearer token.
+- **TinySSH (`musl`, Public-Key Only) + Web Drop (`add-ssh-key`)**:
+  - Login SSH hanya menerima kunci modern (**Ed25519** / `ecdsa-sha2-nistp256`), tanpa password login.
+  - Dilengkapi **`add-ssh-key` (Web Drop)** berbasis BusyBox `httpd` + PIN acak 6 digit agar Anda bisa mengirim SSH public key dari browser PC/HP tanpa perlu *copy-paste* di konsol VNC.
+- **Firewall Kernel `nftables` (`S15firewall`)**:
+  - Berjalan murni di kernel (`0 MB` RAM daemon tambahan), otomatis mendeteksi port kustom dari `/etc/tinyssh/tinyssh.conf` dan `/etc/x-ui-agent/agent.conf`.
+  - Mendukung mode **`TRUSTED_IPS`** (*allowlist*) atau **auto-ban dinamis** (`5` koneksi baru/menit -> ban `10` menit untuk IPv4 & IPv6).
+- **Dual-Stack IPv4/IPv6 & `netui` TUI**:
+  - Jalankan **`netui`** untuk mengatur IPv4 (`dhcp` / `static` / `off`) dan IPv6 (`slaac` / `static` / `off`) secara independen.
+- **OOM Resilience & Auto-Recovery**:
+  - **Kernel `zram` 32 MB (`LZ4`)** aktif otomatis di Live ISO maupun disk install.
+  - **`oom_score_adj = -900`** melindungi TinySSH agar akses SSH darurat tetap hidup saat RAM kritis.
+  - **Auto-respawn supervisor** di `/etc/init.d/S50x-ui-agent` menghidupkan ulang `x-ui-agent-rs` dalam 2 detik bila terhenti/terbunuh OOM.
+- **Utilitas Bawaan**: `htop` (statis `musl`), WireGuard kernel-native (`wg`), `ntpd`, `check-readiness`, `save-config`.
+
+---
+
+## Cara Build Image (ISO-Only `0.1.x`)
+
+Versi rilis diatur di file [`VERSION`](VERSION) (saat ini `0.1.4`). Output build hanya menghasilkan **`out/mini-linux-v<VERSION>.iso`**.
+
+### Opsi 1: Otomatis via GitHub Actions
+1. Jalankan workflow [build-mini-linux.yml](.github/workflows/build-mini-linux.yml) melalui tab **Actions** (atau push tag `v0.1.x`).
+2. Centang `create_release` pada `workflow_dispatch` jika ingin otomatis membuat GitHub Release dengan aset tunggal `mini-linux-v<VERSION>.iso`.
 
 ### Opsi 2: Build Lokal di Linux / WSL2 (Ubuntu 24.04)
 ```bash
 sudo apt-get update && sudo apt-get install -y \
-  build-essential bc bison flex libelf-dev libssl-dev \
+  build-essential bc bison flex libelf-dev libssl-dev pkg-config \
   musl-tools linux-libc-dev syslinux extlinux isolinux \
-  syslinux-common xorriso e2fsprogs fdisk qemu-utils \
+  syslinux-common xorriso e2fsprogs fdisk \
   ca-certificates curl xz-utils bzip2
 
 chmod +x scripts/*.sh
@@ -51,49 +52,42 @@ bash scripts/build-all.sh
 
 ---
 
-## Pengujian di VirtualBox (128 MB RAM)
+## Deploy ke Cloud VPS & VirtualBox
 
-Letakkan `mini-linux.iso` hasil build ke folder `out\mini-linux.iso`, lalu jalankan di PowerShell Windows:
-
-```powershell
-.\scripts\test-vbox.ps1 -IsoPath .\out\mini-linux.iso -Recreate
-```
-
-Login melalui SSH dari Windows:
-```powershell
-ssh -p 2222 root@127.0.0.1
-# Password awal: minilinux
-```
-
-Di dalam VM, jalankan pemeriksaan kesiapan:
-```sh
-check-readiness
-free -m
-```
-
-Untuk menginstal ke disk virtual VirtualBox agar boot tanpa ISO:
-```sh
-install-to-disk /dev/sda
-# Setelah selesai, lepas ISO di VirtualBox lalu reboot
-```
+1. Unduh `mini-linux-v0.1.x.iso` dari [GitHub Releases](https://github.com/zieru/micro-net-linux/releases) lalu mount sebagai **Custom ISO** (RAM `128 MB`), kemudian boot.
+2. Di konsol VNC, jalankan installer permanen ke disk:
+   ```sh
+   install-to-disk /dev/vda   # atau /dev/sda di VirtualBox
+   ```
+   Ikuti dialog interaktif untuk:
+   - Ukuran `/swapfile` (default `256 MB`),
+   - Konfigurasi jaringan (`DHCP` / `Static` IPv4 & IPv6),
+   - Password root baru (hash **SHA-512**),
+   - Penambahan SSH public key via **Web Drop** (`1) Web Drop`) — buka URL + masukkan PIN 6 digit dari browser PC/HP Anda.
+3. Lepas/eject Custom ISO dari panel VPS lalu `reboot`.
 
 ---
 
-## Deploy ke Cloud VPS (Custom ISO)
+## Manajemen Layanan & Konfigurasi
 
-1. Upload `out/mini-linux.iso` sebagai **Custom ISO** di panel VPS, set RAM `128 MB`, lalu boot.
-2. Buka VNC/Console atau SSH (jika DHCP VPS langsung aktif), lalu instal permanen ke disk VPS:
-   ```sh
-   install-to-disk /dev/vda
-   ```
-3. Unmount/eject ISO dari panel VPS dan reboot.
-4. Untuk konfigurasi IP statis, salin `/etc/network.conf.example` ke `/etc/network.conf` lalu jalankan `/etc/init.d/S20network restart`.
-5. Untuk mengaktifkan WireGuard, buat `/etc/wireguard/wg0.conf` (lihat `/etc/wireguard/wg0.conf.example`) lalu jalankan `/etc/init.d/S40wireguard restart`.
+| Layanan / Fitur | File Konfigurasi | Terapkan Perubahan |
+| :--- | :--- | :--- |
+| **Network (IPv4/IPv6)** | `/etc/network.conf` (atau jalankan `netui`) | `/etc/init.d/S20network restart` |
+| **Firewall & Auto-Ban** | `/etc/firewall.conf` | `/etc/init.d/S15firewall restart` |
+| **TinySSH (Port Kustom)** | `/etc/tinyssh/tinyssh.conf` | `/etc/init.d/S55tinyssh restart && /etc/init.d/S15firewall restart` |
+| **`x-ui-agent-rs` (`:2053`)** | `/etc/x-ui-agent/agent.conf` | `/etc/init.d/S50x-ui-agent restart` |
+| **Tambah SSH Key Kapan Saja** | `/root/.ssh/authorized_keys` | Jalankan `add-ssh-key` |
+| **WireGuard** | `/etc/wireguard/wg0.conf` | `/etc/init.d/S40wireguard restart` |
 
-## Catatan Tahap Berikutnya (`xray-core` + `x-ui-agent`)
-Saat nanti menambahkan biner Go (`xray-core`) ke OS 128 MB ini:
-- Kompilasi statis dengan `CGO_ENABLED=0 GOARCH=amd64`.
-- Jalankan dengan batas memori Go runtime agar aman dari OOM saat lonjakan trafik:
-  ```sh
-  GOMEMLIMIT=40MiB GOGC=40 /usr/local/bin/xray run -c /etc/xray/config.json
-  ```
+Koneksi SSH ke VPS (hanya mendukung kunci **Ed25519**, tanpa password):
+```bash
+ssh -i ~/.ssh/id_ed25519 root@<IP_VPS>
+```
+
+Pemeriksaan cepat di dalam VM:
+```sh
+check-readiness
+free -m
+cat /proc/swaps
+nft list table inet minilinux_fw
+```
